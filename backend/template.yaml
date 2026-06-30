@@ -1,0 +1,312 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Cashflow tracking app backend — DynamoDB storage, an HTTP API for CRUD,
+  a streaming OpenAI parser + accounting assistant, and an OpenAI speech-to-text
+  proxy for the voice mic.
+
+Parameters:
+  OpenAiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: >
+      OpenAI API key. Powers the assistant, the parser, and transcription.
+      Pass at deploy time; never commit it.
+  ChatModel:
+    Type: String
+    Default: gpt-5.4-mini
+    Description: Model for the main accounting assistant (Munshi).
+  ParseModel:
+    Type: String
+    Default: gpt-5.4-mini
+    Description: Model for the simple transaction parser.
+  TranscribeModel:
+    Type: String
+    Default: gpt-4o-transcribe
+    Description: Model for speech-to-text (gpt-4o-transcribe is most accurate).
+  TranscribeLanguage:
+    Type: String
+    Default: ''
+    Description: >
+      Force a single STT language (ISO-639-1, e.g. 'hi'). Leave EMPTY to
+      auto-detect Hindi/English. Set 'hi' if Urdu still slips through.
+  OpenAiBaseUrl:
+    Type: String
+    Default: https://api.openai.com/v1
+    Description: OpenAI API base URL.
+  AllowedOrigin:
+    Type: String
+    Default: '*'
+    Description: >
+      CORS allow-origin. For Capacitor Android the WebView origins are
+      https://localhost and capacitor://localhost; '*' is fine for a demo.
+  AuthDomainPrefix:
+    Type: String
+    Default: cashflow-auth-914210060536
+    Description: Unique prefix for the Cognito Hosted UI domain (for Google login).
+  CallbackUrls:
+    Type: CommaDelimitedList
+    Default: 'http://localhost:8000,https://localhost,capacitor://localhost'
+    Description: OAuth redirect URLs (where the Hosted UI returns after Google login).
+  GoogleClientId:
+    Type: String
+    Default: ''
+    Description: Google OAuth client id (leave empty to disable Google login).
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: Google OAuth client secret (leave empty to disable Google login).
+
+Conditions:
+  HasGoogle: !Not [!Equals [!Ref GoogleClientId, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    MemorySize: 256
+    Timeout: 30
+    Architectures: [arm64]
+
+Resources:
+
+  # ---------- Storage ----------
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cashflow-transactions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: txnId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: txnId
+          KeyType: RANGE
+
+  # ---------- Authentication (Cognito User Pool) ----------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: cashflow-users
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      # Lenient password policy as requested — just a 6-char minimum.
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireUppercase: false
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+      Schema:
+        - Name: name
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_CODE
+        EmailSubject: 'Your Cashflow verification code'
+        EmailMessage: 'Welcome to Cashflow! Your verification code is {####}'
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: cashflow-web
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 24
+      IdTokenValidity: 24
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      SupportedIdentityProviders:
+        !If [HasGoogle, [COGNITO, Google], [COGNITO]]
+      CallbackURLs: !Ref CallbackUrls
+      LogoutURLs: !Ref CallbackUrls
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [email, openid, profile]
+      AllowedOAuthFlowsUserPoolClient: true
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref AuthDomainPrefix
+      UserPoolId: !Ref UserPool
+
+  GoogleIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Condition: HasGoogle
+    Properties:
+      UserPoolId: !Ref UserPool
+      ProviderName: Google
+      ProviderType: Google
+      ProviderDetails:
+        client_id: !Ref GoogleClientId
+        client_secret: !Ref GoogleClientSecret
+        authorize_scopes: 'openid email profile'
+      AttributeMapping:
+        email: email
+        name: name
+
+  # ---------- CRUD API (HTTP API, protected by Cognito JWT) ----------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowHeaders: ['content-type', 'x-user-id', 'authorization']
+        AllowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS']
+      Auth:
+        Authorizers:
+          CognitoJwt:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+              audience:
+                - !Ref UserPoolClient
+        DefaultAuthorizer: CognitoJwt
+
+  TxnsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      CodeUri: src/txns/
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TransactionsTable
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TransactionsTable
+      Events:
+        List:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: GET
+            Path: /txns
+        Create:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: POST
+            Path: /txns
+        Delete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Method: DELETE
+            Path: /txns/{id}
+
+  # ---------- Streaming transaction parser (OpenAI · Lambda Function URL) ----------
+  ParseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      CodeUri: src/parse/
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          PARSE_MODEL: !Ref ParseModel
+          OPENAI_BASE_URL: !Ref OpenAiBaseUrl
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins: [!Ref AllowedOrigin]
+          AllowHeaders: ['content-type']
+          AllowMethods: ['POST']
+
+  # ---------- Streaming accounting assistant (OpenAI · Lambda Function URL) ----------
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      CodeUri: src/chat/
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          CHAT_MODEL: !Ref ChatModel
+          OPENAI_BASE_URL: !Ref OpenAiBaseUrl
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: RESPONSE_STREAM
+        Cors:
+          AllowOrigins: [!Ref AllowedOrigin]
+          AllowHeaders: ['content-type']
+          AllowMethods: ['POST']
+
+  # ---------- Speech-to-text proxy (OpenAI · buffered Lambda Function URL) ----------
+  TranscribeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      CodeUri: src/transcribe/
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          TRANSCRIBE_MODEL: !Ref TranscribeModel
+          TRANSCRIBE_LANGUAGE: !Ref TranscribeLanguage
+          OPENAI_BASE_URL: !Ref OpenAiBaseUrl
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+        Cors:
+          AllowOrigins: [!Ref AllowedOrigin]
+          AllowHeaders: ['content-type']
+          AllowMethods: ['POST']
+
+Outputs:
+  ApiBaseUrl:
+    Description: HTTP API base URL (set as apiBaseUrl in app/www/config.js)
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  ParseUrl:
+    Description: Streaming parser Function URL (set as parseUrl)
+    Value: !GetAtt ParseFunctionUrl.FunctionUrl
+  ChatUrl:
+    Description: Streaming accounting-assistant Function URL (set as chatUrl)
+    Value: !GetAtt ChatFunctionUrl.FunctionUrl
+  TranscribeUrl:
+    Description: Speech-to-text Function URL (set as transcribeUrl)
+    Value: !GetAtt TranscribeFunctionUrl.FunctionUrl
+  UserPoolId:
+    Description: Cognito User Pool id (set as cognito.userPoolId)
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Cognito app client id (set as cognito.clientId)
+    Value: !Ref UserPoolClient
+  AuthDomain:
+    Description: Cognito Hosted UI domain (set as cognito.domain) — for Google login
+    Value: !Sub 'https://${AuthDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+  Region:
+    Description: Deploy region (set as region)
+    Value: !Ref AWS::Region

@@ -1,0 +1,11 @@
+{
+  "appId": "com.cashflow.tracker",
+  "appName": "Cashflow",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

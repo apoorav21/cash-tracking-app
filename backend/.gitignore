@@ -1,0 +1,5 @@
+kimi.env
+packaged.yaml
+node_modules/
+*.zip
+openai.env

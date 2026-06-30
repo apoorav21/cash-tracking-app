@@ -1,0 +1,1677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Cashflow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<script src="config.js"></script>
+<script src="backend.js"></script>
+<style>
+  *{box-sizing:border-box;-webkit-font-smoothing:antialiased;}
+  html,body{margin:0;height:100%;font-family:'Nunito',-apple-system,sans-serif;background:#e4dccf;}
+  .scr::-webkit-scrollbar{width:0;height:0;}
+  .scr{scrollbar-width:none;}
+  input,textarea,button{font-family:'Nunito',sans-serif;}
+  @keyframes slideUp{from{transform:translateY(100%);}to{transform:translateY(0);}}
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  @keyframes pulseRing{0%{transform:scale(1);opacity:.55;}70%{transform:scale(2.1);opacity:0;}100%{transform:scale(2.1);opacity:0;}}
+  @keyframes mb1{0%,100%{height:10px;}50%{height:30px;}}
+  @keyframes mb2{0%,100%{height:22px;}50%{height:44px;}}
+  @keyframes mb3{0%,100%{height:14px;}50%{height:36px;}}
+  @keyframes mb4{0%,100%{height:26px;}50%{height:12px;}}
+  @keyframes floatUp{from{transform:translateY(8px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  @media (max-width:440px){
+    .frameWrap{padding:0 !important;}
+    .phone{width:100vw !important;height:100vh !important;height:100dvh !important;border-radius:0 !important;box-shadow:none !important;}
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+const Backend = window.CashflowBackend;
+
+/* ---------- helpers ---------- */
+function css(str){
+  const o={};
+  String(str).split(';').forEach(d=>{
+    const i=d.indexOf(':'); if(i<0) return;
+    let k=d.slice(0,i).trim(); let v=d.slice(i+1).trim();
+    if(!k) return;
+    k=k.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
+    o[k]=v;
+  });
+  return o;
+}
+
+const _now = new Date();
+const TODAY = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate());
+const isoToday = () => `${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,'0')}-${String(TODAY.getDate()).padStart(2,'0')}`;
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const STORE_KEY = 'cashflow.txns.v1';
+
+const BASE_PALETTE = {
+  'Ramesh Uncle':'#E5544B','Priya Shah':'#E76F51','Mehta Finance':'#C44536',
+  'Suresh Patel':'#2A9D8F','Anil Verma':'#1F9488','Deepak Rao':'#36A38C',
+  'Greenfield Plot':'#E9A23B',
+};
+const SAMPLES = [
+  'Today I took 4 lakh from Ramesh Uncle at 12% for 6 months in cash',
+  'I lent 2 lakh to Deepak Rao at 20% for 9 months by bank transfer',
+  'Took 6 lakh from Mehta Finance at 14% for 2 years for business',
+];
+
+function seed(){
+  return [
+    { id:1, kind:'borrowed', party:'Ramesh Uncle', amount:400000, date:'2026-03-15', rate:12, rateBasis:'annual', term:6, method:'cash', purpose:'Business working capital', notes:'Family loan, no paperwork. Pay on time.', repayments:[] },
+    { id:2, kind:'borrowed', party:'Priya Shah', amount:250000, date:'2026-01-10', rate:18, rateBasis:'annual', term:12, method:'bank', purpose:'Inventory purchase', notes:'', repayments:[] },
+    { id:3, kind:'borrowed', party:'Mehta Finance', amount:600000, date:'2025-11-01', rate:14, rateBasis:'annual', term:24, method:'bank', purpose:'Property down-payment', notes:'NBFC loan, EMI auto-debit from HDFC.', repayments:[] },
+    { id:4, kind:'lent', party:'Suresh Patel', amount:300000, date:'2026-04-01', rate:2, rateBasis:'monthly', term:6, method:'bank', purpose:'His shop expansion', notes:'Funded from the Ramesh loan. दो रुपए सैकड़ा.', repayments:[{date:'2026-05-10',amount:100000,method:'cash',note:'Partial — first किश्त'}] },
+    { id:5, kind:'lent', party:'Anil Verma', amount:150000, date:'2026-05-05', rate:1.25, rateBasis:'monthly', term:3, method:'cash', purpose:'Short-term bridge', notes:'सवा रुपए सैकड़ा.', repayments:[] },
+    { id:6, kind:'lent', party:'Deepak Rao', amount:200000, date:'2026-02-12', rate:1.5, rateBasis:'monthly', term:9, method:'bank', purpose:'Truck purchase', notes:'Cousin, reliable. डेढ़ रुपए सैकड़ा.', repayments:[] },
+    { id:7, kind:'asset', party:'Greenfield Plot', amount:500000, date:'2026-02-20', rate:0, term:0, method:'bank', purpose:'Land investment', notes:'Bought from Vijay using Mehta Finance funds. Sector 12.' },
+  ];
+}
+// Storage is namespaced per signed-in user so two accounts on one device never
+// mix. uid is the Cognito `sub` (or undefined before login).
+const storeKey = (uid)=> STORE_KEY + (uid?(':'+uid):'');
+function loadLocal(uid){
+  try{ const raw=localStorage.getItem(storeKey(uid)); if(raw){ const p=JSON.parse(raw); if(Array.isArray(p)) return p; } }catch(e){}
+  return seed();
+}
+function saveLocal(uid,t){ try{ localStorage.setItem(storeKey(uid), JSON.stringify(t)); }catch(e){} }
+
+// ---- Munshi conversations (ChatGPT/Claude-style history, stored locally) ----
+const CHATS_KEY = 'cashflow_chats_v1';
+const chatsKey = (uid)=> CHATS_KEY + (uid?(':'+uid):'');
+function loadChats(uid){
+  try{ const raw=localStorage.getItem(chatsKey(uid)); if(raw){ const p=JSON.parse(raw); if(Array.isArray(p)) return p; } }catch(e){}
+  return [];
+}
+function saveChats(uid,c){ try{ localStorage.setItem(chatsKey(uid), JSON.stringify(c)); }catch(e){} }
+const newConvId = () => 'c'+Date.now()+Math.random().toString(36).slice(2,6);
+// A short title from the first user message.
+const titleFrom = (msgs) => {
+  const first=(msgs||[]).find(m=>m.role==='user');
+  if(!first) return 'New chat';
+  const t=first.content.replace(/\s+/g,' ').trim();
+  return t.length>38 ? t.slice(0,38)+'…' : t;
+};
+
+const pd = s => { const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); };
+const addMonths = (date,m) => { const d=new Date(date); d.setMonth(d.getMonth()+m); return d; };
+const days = (a,b) => Math.round((b-a)/86400000);
+const initials = name => name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+function inr(n){ n=Math.round(n); const s=Math.abs(n).toString(); let lt=s.slice(-3),ot=s.slice(0,-3); if(ot)lt=','+lt; ot=ot.replace(/\B(?=(\d{2})+(?!\d))/g,','); return (n<0?'-':'')+'₹'+ot+lt; }
+function compact(n){ const a=Math.abs(n); let s; if(a>=10000000)s=(n/10000000).toFixed(2)+' Cr'; else if(a>=100000)s=(n/100000).toFixed(2)+' L'; else if(a>=1000)s=(n/1000).toFixed(0)+'K'; else s=Math.round(n).toString(); return '₹'+s; }
+function fmtDate(d){ return d.getDate()+' '+MON[d.getMonth()]+' '+d.getFullYear(); }
+// Interest model — Indian "रुपया सैकड़ा" convention: rate is % PER MONTH by
+// default (rateBasis 'monthly'); 'annual' rates are divided by 12. Simple
+// interest, 30-day month, day-count proration. Repayments reduce the balance
+// from their date onward, so early returns stop earning interest (exactly the
+// कलम-wise logic in the user's chat history).
+function monthlyFrac(t){ const r=(parseFloat(t.rate)||0)/100; return t.rateBasis==='annual' ? r/12 : r; }
+// A repayment may split into principal returned + interest paid. Older records
+// stored a single `amount` — treat that as principal for backward compatibility.
+const repPrincipal = r => (r.principal!=null && r.principal!=='') ? (parseFloat(r.principal)||0) : (parseFloat(r.amount)||0);
+const repInterest  = r => parseFloat(r.interest)||0;
+function repaidUpTo(t,end){ return (t.repayments||[]).reduce((s,r)=> (pd(r.date)<=end ? s+repPrincipal(r) : s), 0); }
+function interestPaidUpTo(t,end){ end=end||TODAY; return (t.repayments||[]).reduce((s,r)=> (pd(r.date)<=end ? s+repInterest(r) : s), 0); }
+function outstanding(t,end){ end=end||TODAY; return Math.max(0,(parseFloat(t.amount)||0)-repaidUpTo(t,end)); }
+const matOf = t => addMonths(pd(t.date), parseFloat(t.term)||0);
+// Accrued simple interest from start to `end`, walking each repayment (principal
+// portion reduces the balance from its date onward).
+function accruedTo(t,end){
+  if(t.kind==='asset' || !parseFloat(t.rate)) return 0;
+  let cursor=pd(t.date); if(end<=cursor) return 0;
+  const dr=monthlyFrac(t)/30;
+  const reps=(t.repayments||[]).map(r=>({d:pd(r.date),a:repPrincipal(r)}))
+    .filter(r=>r.d>cursor && r.d<=end).sort((x,y)=>x.d-y.d);
+  let bal=parseFloat(t.amount)||0, interest=0;
+  for(const r of reps){ interest+=bal*dr*days(cursor,r.d); bal=Math.max(0,bal-r.a); cursor=r.d; }
+  interest+=bal*dr*days(cursor,end);
+  return interest;
+}
+const isCompound = t => t.interestType==='compound';
+// COMPOUND: total owed (outstanding principal + unpaid interest) to `end`, with
+// interest compounding each month (मासिक चक्रवृद्धि). Repayments reduce the
+// running balance from their date; the leftover keeps compounding.
+function compoundOwedTo(t,end){
+  if(t.kind==='asset' || !parseFloat(t.rate)) return outstanding(t,end);
+  let cursor=pd(t.date); if(end<=cursor) return parseFloat(t.amount)||0;
+  const mf=monthlyFrac(t);
+  const evs=(t.repayments||[]).map(r=>({d:pd(r.date),paid:repPrincipal(r)+repInterest(r)}))
+    .filter(r=>r.d>cursor && r.d<=end).sort((x,y)=>x.d-y.d);
+  let bal=parseFloat(t.amount)||0;
+  for(const e of evs){ bal*=Math.pow(1+mf, days(cursor,e.d)/30); bal=Math.max(0,bal-e.paid); cursor=e.d; }
+  bal*=Math.pow(1+mf, days(cursor,end)/30);
+  return bal;
+}
+// NET interest still owed (unpaid) at `end`, for either interest type.
+function interestDueTo(t,end){
+  if(t.kind==='asset' || !parseFloat(t.rate)) return 0;
+  if(isCompound(t)) return Math.max(0, compoundOwedTo(t,end) - outstanding(t,end));
+  return Math.max(0, accruedTo(t,end) - interestPaidUpTo(t,end));
+}
+// Interest owed right now (interest stops accruing at maturity for display).
+function interestDue(t){ if(t.kind==='asset')return 0; const mat=matOf(t); return interestDueTo(t, TODAY<mat?TODAY:mat); }
+// Total interest over the full term (net of interest already paid).
+function interestFull(t){ if(t.kind==='asset')return 0; return interestDueTo(t, matOf(t)); }
+// Back-compat alias used by a couple of call sites.
+const accrued = (t)=> interestDue(t);
+const TINT = { '#E5544B':'#FBEAE7','#E76F51':'#FBEAE7','#C44536':'#FBEAE7','#2A9D8F':'#E4F2EF','#1F9488':'#E4F2EF','#36A38C':'#E4F2EF','#E9A23B':'#FBF1DC' };
+const tintFor = c => TINT[c] || '#f1ece3';
+
+/* ---------- offline NL parser (fallback when Bedrock unavailable) ---------- */
+function parseLocal(text){
+  const t=' '+text.toLowerCase()+' ';
+  let kind='borrowed';
+  if(/\b(lent|lend|gave|give|loaned to|loan to)\b/.test(t)) kind='lent';
+  if(/\b(bought|purchase|purchased|property|plot|land|flat|house)\b/.test(t)) kind='asset';
+  else if(/\b(took|take|borrow|borrowed|got)\b/.test(t)) kind='borrowed';
+  let amount='';
+  let m=t.match(/(\d+(?:\.\d+)?)\s*(crore|cr)\b/);
+  if(m) amount=parseFloat(m[1])*10000000;
+  else if((m=t.match(/(\d+(?:\.\d+)?)\s*(lakh|lac|lakhs|l)\b/))) amount=parseFloat(m[1])*100000;
+  else if((m=t.match(/(\d+(?:\.\d+)?)\s*(thousand|k)\b/))) amount=parseFloat(m[1])*1000;
+  else if((m=t.match(/(?:rs\.?|₹|inr)\s*(\d[\d,]*)/))) amount=parseFloat(m[1].replace(/,/g,''));
+  else if((m=t.match(/\b(\d{4,})\b/))) amount=parseFloat(m[1]);
+  // "रुपया सैकड़ा" words → monthly %. "do/dedh/sava/paune" map to 2/1.5/1.25/1.75.
+  let rate='';
+  const SAIKDA={ 'do':2,'dedh':1.5,'sava':1.25,'paune do':1.75,'paune':0.75,'ek':1,'sawa':1.25,'dhai':2.5,'adha':0.5 };
+  let sm=t.match(/(paune do|sava|sawa|dedh|dhai|do|ek|adha|paune)\s+(?:rupa?ye?a?|rupee)?\s*(?:saikda|sainkda|sekda)/);
+  if(sm) rate=SAIKDA[sm[1]]!=null?SAIKDA[sm[1]]:'';
+  if(rate===''){ m=t.match(/(\d+(?:\.\d+)?)\s*(?:%|percent|per cent|rupaye? saikda|rupaye? sainkda|saikda|sainkda)/); if(m)rate=parseFloat(m[1]); }
+  // Basis: default monthly (सैकड़ा). Annual only if explicitly per-annum/yearly.
+  let rateBasis='monthly';
+  if(/\b(per annum|p\.?\s*a\.?|annual|annually|yearly|per year)\b/.test(t)) rateBasis='annual';
+  // Interest type: simple by default; compound if stated (chakravriddhi / compound).
+  let interestType='simple';
+  if(/\b(compound|chakravriddhi|chakra|chakwriddhi)\b/.test(t) || /चक्रवृद्धि|चक्रवर्ती/.test(text)) interestType='compound';
+  let term=''; m=t.match(/(\d+)\s*(?:months?|mo|mahin[ae]|mahine)\b/); if(m)term=parseFloat(m[1]);
+  else if((m=t.match(/(\d+)\s*(?:years?|yrs?|yr)\b/))) term=parseFloat(m[1])*12;
+  let party=''; m=text.match(/\b(?:from|to)\s+([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2})/);
+  if(m) party=m[1].replace(/\s+(at|for|in|by|on)$/i,'').trim();
+  let method='cash';
+  if(/\b(bank|transfer|upi|cheque|check|neft|imps|account|online)\b/.test(t)) method='bank';
+  let purpose=''; m=text.match(/\bfor\s+([a-z][a-z\s]+?)(?:\s+(?:at|in|by|for|on)\b|$)/i);
+  if(m && !/\d/.test(m[1])) purpose=m[1].trim().replace(/\s+\d+.*$/,'');
+  const td=TODAY;
+  const ds=td.getFullYear()+'-'+String(td.getMonth()+1).padStart(2,'0')+'-'+String(td.getDate()).padStart(2,'0');
+  return { kind, amount:amount||'', party:party||'', rate:rate===''?'':rate, rateBasis, interestType, term:term===''?'':term,
+    method, date:ds, purpose:purpose?(purpose[0].toUpperCase()+purpose.slice(1)):'', notes:'' };
+}
+// Normalise a draft object so every field is a string the inputs can edit.
+function draftFrom(d){
+  if(!d) return null;
+  return {
+    kind:['borrowed','lent','asset'].includes(d.kind)?d.kind:'borrowed',
+    party:d.party!=null?String(d.party):'',
+    amount:d.amount!=null&&d.amount!==''?String(d.amount):'',
+    rate:d.rate!=null&&d.rate!==''?String(d.rate):'',
+    rateBasis:d.rateBasis==='annual'?'annual':'monthly',
+    interestType:d.interestType==='compound'?'compound':'simple',
+    term:d.term!=null&&d.term!==''?String(d.term):'',
+    method:d.method==='bank'?'bank':'cash',
+    date:d.date||TODAY.toISOString().slice(0,10),
+    purpose:d.purpose!=null?String(d.purpose):'',
+    notes:d.notes!=null?String(d.notes):'',
+  };
+}
+
+const chipStyle = (active) => `border-radius:20px;padding:8px 15px;font-size:13px;font-weight:800;cursor:pointer;background:${active?'#2A2420':'#fff'};color:${active?'#fff':'#8C8278'};border:1px solid ${active?'#2A2420':'#ece4d8'};`;
+const segStyle = (active,accent) => `flex:1;border-radius:13px;padding:11px 0;font-size:13px;font-weight:800;cursor:pointer;background:${active?accent:'#fff'};color:${active?'#fff':'#8C8278'};border:1.5px solid ${active?accent:'#ece4d8'};`;
+const seg2Style = (active) => `border:none;border-radius:9px;padding:7px 16px;font-size:13px;font-weight:800;cursor:pointer;background:${active?'#fff':'transparent'};color:${active?'#2A2420':'#a89f93'};box-shadow:${active?'0 1px 4px rgba(0,0,0,.12)':'none'};`;
+
+const ACCENT = '#F2784B';
+const ACCENT_SHADOW = 'rgba(242,120,75,.55)';
+
+/* ============================================================= */
+function App({ user, onSignOut }){
+  const uid = user && user.sub;
+  const [txns, setTxns] = useState(()=>loadLocal(uid));
+  const [screen, setScreen] = useState('home');
+  const [back, setBack] = useState('people');
+  const [detailParty, setDetailParty] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [heroStyle, setHeroStyle] = useState('ring');
+  const [syncing, setSyncing] = useState(false);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addStep, setAddStep] = useState('capture');
+  const [typed, setTyped] = useState('');
+  const [transcript, setTranscript] = useState('');
+  const [draft, setDraft] = useState(null);
+  const [aiThinking, setAiThinking] = useState(false);
+  const [listenError, setListenError] = useState('');
+  const [editingId, setEditingId] = useState(null);     // non-null => editing an existing txn
+  const [repayFor, setRepayFor] = useState(null);        // txn being repaid (modal)
+  const [repayDraft, setRepayDraft] = useState({ amount:'', date:isoToday(), method:'cash', note:'' });
+  const [confirmDelete, setConfirmDelete] = useState(null); // txn pending delete
+  // Assistant (Munshi) — conversations (ChatGPT/Claude-style history)
+  const [convs, setConvs] = useState(()=>loadChats(uid));        // [{id,title,msgs,createdAt,updatedAt}]
+  const [activeConv, setActiveConv] = useState(null);    // id of open conversation, or null => list
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatListening, setChatListening] = useState(false);
+  const [chatTranscribing, setChatTranscribing] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
+  const recTimer = useRef(null);
+  const [copied, setCopied] = useState(false);
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef(null);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [pwOld, setPwOld] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwErr, setPwErr] = useState('');
+  const chatRecRef = useRef(null);
+  const chatScrollRef = useRef(null);
+  const micIdx = useRef(0);
+  const recRef = useRef(null);
+  const simTimers = useRef([]);
+  const paletteRef = useRef({ ...BASE_PALETTE });
+
+  // Load from cloud (DynamoDB) on mount; fall back to local cache.
+  useEffect(()=>{
+    let alive = true;
+    (async ()=>{
+      if(Backend?.apiConfigured){
+        setSyncing(true);
+        try{
+          const remote = await Backend.listTxns();
+          if(alive && remote){
+            // Register colours for any unknown parties.
+            remote.forEach(t=>{ if(!paletteRef.current[t.party]) paletteRef.current[t.party]= t.kind==='lent'?'#2A9D8F':t.kind==='asset'?'#E9A23B':'#E5544B'; });
+            setTxns(remote.length ? remote : seed());
+          }
+        }catch(e){ /* keep local cache */ }
+        finally{ if(alive) setSyncing(false); }
+      }
+    })();
+    return ()=>{ alive=false; };
+  }, []);
+
+  // Mirror to local cache for offline use.
+  useEffect(()=>{ saveLocal(uid, txns); }, [txns]);
+
+  const showToast = (msg) => { setToast(msg); if(toastTimer.current) clearTimeout(toastTimer.current); toastTimer.current=setTimeout(()=>setToast(''), 2200); };
+  const openChangePw = () => { setPwOld(''); setPwNew(''); setPwErr(''); setPwOpen(true); };
+  const doChangePw = async () => {
+    setPwErr('');
+    if((pwNew||'').length<6){ setPwErr('New password must be at least 6 characters.'); return; }
+    setPwBusy(true);
+    try{ await Backend.changePassword({ oldPassword:pwOld, newPassword:pwNew }); setPwOpen(false); showToast('Password changed ✓'); }
+    catch(e){ const m=(e&&e.message)||''; setPwErr(/NotAuthorized|Incorrect/i.test(m)?'Current password is wrong.':/InvalidPassword|InvalidParameter/i.test(m)?'New password must be at least 6 characters.':/LimitExceeded/i.test(m)?'Too many attempts — try later.':(m||'Could not change password.')); }
+    finally{ setPwBusy(false); }
+  };
+  const pColor = useCallback((p)=> paletteRef.current[p] || '#7c6f5f', []);
+  const clearSim = () => { simTimers.current.forEach(clearTimeout); simTimers.current=[]; };
+  useEffect(()=>()=>{ clearSim(); if(recRef.current) try{recRef.current.stop();}catch(e){} }, []);
+
+  const openParty = (p) => { setBack(screen); setDetailParty(p); setScreen('detail'); };
+  const setDraftField = (k,v) => setDraft(d => ({...d, [k]:v}));
+
+  // Upsert a transaction: optimistic local update + cloud save (PutCommand
+  // overwrites by txnId, so the same call handles both add and edit).
+  const persistTxn = useCallback(async (txn) => {
+    if(!paletteRef.current[txn.party]) paletteRef.current[txn.party]= txn.kind==='lent'?'#2A9D8F':txn.kind==='asset'?'#E9A23B':'#E5544B';
+    setTxns(prev => prev.some(t=>t.id===txn.id) ? prev.map(t=>t.id===txn.id?txn:t) : [txn, ...prev]);
+    if(Backend?.apiConfigured){
+      try{ const saved = await Backend.addTxn(txn); if(saved) setTxns(prev => prev.map(t => t.id===txn.id ? saved : t)); }
+      catch(e){ /* stays in local cache; reconciles on next load */ }
+    }
+  }, []);
+
+  const removeTxn = useCallback(async (txn) => {
+    setTxns(prev => prev.filter(t => t.id !== txn.id));
+    if(detailParty){ const others = txns.filter(t=>t.party===detailParty && t.id!==txn.id); if(!others.length){ setScreen(back||'people'); setDetailParty(null); } }
+    if(Backend?.apiConfigured){ try{ await Backend.deleteTxn(txn.id); }catch(e){} }
+  }, [detailParty, txns, back]);
+
+  // Open the add-sheet pre-filled with an existing txn for editing.
+  const editTxn = (t) => {
+    setEditingId(t.id);
+    setDraft(draftFrom({ ...t, amount:t.amount, rate:t.rate, term:t.term }));
+    setTranscript(''); setListenError(''); setAiThinking(false);
+    setAddStep('preview'); setAddOpen(true);
+  };
+
+  const openRepay = (t) => { setRepayFor(t); setRepayDraft({ principal:'', interest:'', date:isoToday(), method:'cash', note:'' }); };
+  const saveRepay = async () => {
+    const t = repayFor;
+    const principal = parseFloat(repayDraft.principal)||0;
+    const interest = parseFloat(repayDraft.interest)||0;
+    if(!t || (principal<=0 && interest<=0)){ setRepayFor(null); return; }
+    const rep = { date:repayDraft.date||isoToday(), principal, interest, amount:principal+interest,
+      method:repayDraft.method||'cash', note:(repayDraft.note||'').trim() };
+    const updated = { ...t, repayments:[...(t.repayments||[]), rep] };
+    setRepayFor(null);
+    await persistTxn(updated);
+    showToast(t.kind==='lent'?'किश्त दर्ज हो गई ✓':'Repayment saved ✓');
+  };
+  // Interest owed up to a given date, after a hypothetical principal payment now.
+  const interestTillToday = (t) => Math.round(interestDue(t));
+
+  const openAdd = () => { setEditingId(null); setAddOpen(true); setAddStep('capture'); setTyped(''); setTranscript(''); setDraft(null); setListenError(''); setAiThinking(false); };
+  const closeAdd = () => { clearSim(); if(recRef.current) try{recRef.current.stop();}catch(e){} setAddOpen(false); setEditingId(null); };
+
+  // Refine an offline draft with the streaming Bedrock parser, merging non-empty fields.
+  const refineWithAI = async (text) => {
+    if(!Backend?.parseText) return;
+    setAiThinking(true);
+    try{
+      const ai = await Backend.parseText(text, ()=>{});
+      if(ai){
+        setDraft(prev => {
+          const base = prev || draftFrom(parseLocal(text));
+          const merged = { ...base };
+          ['kind','method'].forEach(k=>{ if(ai[k]) merged[k]=ai[k]; });
+          ['party','purpose','notes'].forEach(k=>{ if(ai[k]!=null && String(ai[k]).trim()!=='') merged[k]=String(ai[k]); });
+          ['amount','rate','term'].forEach(k=>{ if(ai[k]!=null && ai[k]!=='' && Number(ai[k])>0) merged[k]=String(ai[k]); });
+          if(ai.date) merged.date=ai.date;
+          return merged;
+        });
+      }
+    }catch(e){ /* keep offline draft */ }
+    finally{ setAiThinking(false); }
+  };
+
+  // Demo dictation when no STT backend is available.
+  const simulateListen = () => {
+    const sample = SAMPLES[micIdx.current % SAMPLES.length];
+    micIdx.current++;
+    setAddStep('listen'); setTranscript('');
+    const words = sample.split(' ');
+    let i=0;
+    const step = () => {
+      i++; setTranscript(words.slice(0,i).join(' '));
+      if(i<words.length){ simTimers.current.push(setTimeout(step,85)); }
+      else { simTimers.current.push(setTimeout(()=>goPreview(sample), 500)); }
+    };
+    simTimers.current.push(setTimeout(step,85));
+  };
+
+  const goPreview = (text) => {
+    if(!text || !text.trim()){ setAddStep('capture'); return; }
+    setTranscript(text);
+    setDraft(draftFrom(parseLocal(text))); // instant draft
+    setAddStep('preview');
+    refineWithAI(text);                      // then AI refinement
+  };
+
+  const startListen = async () => {
+    setListenError('');
+    setAddStep('listen'); setTranscript('');
+    try{
+      const ctrl = await Backend.startTranscribe({
+        onStatus:(s)=>{ if(s==='silent') setListenError('कुछ सुनाई नहीं दिया — दोबारा बोलें'); else setTranscript(s==='transcribing' ? 'लिख रहा हूँ… · transcribing…' : '🎙️ सुन रहा हूँ… · tap mic to stop'); },
+        onPartial: (t)=> setTranscript(t),
+        onFinal: (t)=> goPreview(t),
+        onError: (e)=> setListenError('Voice: '+(e?.message||'error')),
+      });
+      recRef.current = ctrl;
+      if(ctrl.unavailable){ recRef.current=null; simulateListen(); }
+    }catch(e){
+      setListenError('Voice unavailable — showing a demo.');
+      simulateListen();
+    }
+  };
+  const stopListen = () => { if(recRef.current){ try{recRef.current.stop();}catch(e){} } };
+
+  const parseTyped = () => { const t=typed.trim(); if(!t) return; goPreview(t); };
+
+  const confirmAdd = async () => {
+    const d = draft;
+    const existing = editingId ? txns.find(t=>t.id===editingId) : null;
+    const txn = { id: editingId || `${Date.now()}`, kind:d.kind, party:(d.party||'Unknown').trim(),
+      amount:parseFloat(d.amount)||0, date:d.date, rate:parseFloat(d.rate)||0,
+      rateBasis:d.rateBasis==='annual'?'annual':'monthly',
+      interestType:d.interestType==='compound'?'compound':'simple',
+      term:parseFloat(d.term)||0, method:d.method, purpose:d.purpose||'', notes:d.notes||'',
+      repayments: existing?.repayments || [] };
+    const wasEdit = !!editingId;
+    setAddOpen(false); setEditingId(null);
+    if(!editingId){ setScreen('activity'); setFilter('all'); }
+    await persistTxn(txn);
+    showToast(wasEdit?'Transaction updated ✓':'Transaction saved ✓');
+  };
+
+  /* ---------- Assistant (Munshi) ---------- */
+  const MARK = '<<<ACTION>>>';
+  // Strip every special block (action + statement) from the visible answer.
+  const stripBlocks = (s) => {
+    let out = s;
+    const a = out.indexOf(MARK); if(a>=0) out = out.slice(0,a);
+    out = out.replace(/<<<STATEMENT>>>[\s\S]*?(?:<<<ENDSTATEMENT>>>|$)/g, '');
+    return out.replace(/<<<ENDSTATEMENT>>>/g,'').trim();
+  };
+  // Split the streamed wire format into the model's reasoning and its answer.
+  const splitReply = (acc) => {
+    const ri = acc.indexOf('<<<REPLY>>>');
+    if(ri>=0) return { think:acc.slice(0,ri).replace('<<<THINK>>>','').trim(), answer:acc.slice(ri+'<<<REPLY>>>'.length) };
+    return { think:acc.replace('<<<THINK>>>','').trim(), answer:'' };
+  };
+  const parseAction = (s) => {
+    const i=s.indexOf(MARK); if(i<0) return null;
+    const m=s.slice(i+MARK.length).match(/\{[\s\S]*\}/); if(!m) return null;
+    try{ const a=JSON.parse(m[0]); return (a && a.type) ? a : null; }catch(e){ return null; }
+  };
+  // Extract a complete shareable-statement block, if any.
+  const parseStatement = (s) => {
+    const m = s.match(/<<<STATEMENT>>>([\s\S]*?)<<<ENDSTATEMENT>>>/);
+    return m ? m[1].trim() : null;
+  };
+  // Render **bold** markdown inline so the model's asterisks become real bold
+  // text instead of showing literal stars.
+  const renderRich = (text) => {
+    const s = String(text==null?'':text);
+    return s.split(/(\*\*[^*\n]+\*\*)/g).map((p,i)=> (p.length>4 && p.startsWith('**') && p.endsWith('**'))
+      ? <strong key={i} style={css("font-weight:900;")}>{p.slice(2,-2)}</strong>
+      : <React.Fragment key={i}>{p}</React.Fragment>);
+  };
+  const slim = (t)=>({ kind:t.kind, party:t.party, amount:t.amount, rate:t.rate, rateBasis:t.rateBasis||'monthly', interestType:t.interestType||'simple', term:t.term, date:t.date, method:t.method, purpose:t.purpose, repayments:(t.repayments||[]).map(r=>({date:r.date, principal:repPrincipal(r), interest:repInterest(r)})) });
+  const errLine = (s)=> /__ERROR__/.test(s||'') && /429|too many|quota|rate.?limit/i.test(s||'')
+    ? '⚠️ अभी AI की लिमिट आ गई है (rate limit). थोड़ी देर बाद दोबारा कोशिश करें — बाकी ऐप पूरा चलता रहेगा।'
+    : '⚠️ अभी जवाब नहीं मिल पाया। थोड़ी देर बाद कोशिश करें।';
+
+  // ----- conversation helpers -----
+  const active = convs.find(c=>c.id===activeConv) || null;
+  const chatMsgs = active ? active.msgs : [];
+  // Update the active conversation's messages (updater gets the current msgs).
+  const setChatMsgs = (updater) => setConvs(prev => prev.map(c => c.id!==activeConv ? c
+    : { ...c, msgs: typeof updater==='function' ? updater(c.msgs) : updater, updatedAt: Date.now(), title: (c.title && c.title!=='New chat') ? c.title : titleFrom(typeof updater==='function'?updater(c.msgs):updater) }));
+  const newChat = () => { const id=newConvId(); setConvs(prev=>[{ id, title:'New chat', msgs:[], createdAt:Date.now(), updatedAt:Date.now() }, ...prev.filter(c=>c.msgs && c.msgs.length)]); setActiveConv(id); setChatInput(''); return id; };
+  const openConv = (id) => { setActiveConv(id); };
+  const deleteConv = (id) => { setConvs(prev=>prev.filter(c=>c.id!==id)); if(activeConv===id) setActiveConv(null); };
+  // Return to the list, discarding the current chat if it's still empty.
+  const closeConv = () => { setConvs(prev=>prev.filter(c=> c.id!==activeConv || (c.msgs && c.msgs.length))); setActiveConv(null); };
+
+  const copyText = async (t) => {
+    try{ await navigator.clipboard.writeText(t); }
+    catch(e){ const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(_){} ta.remove(); }
+    setCopied(true); setTimeout(()=>setCopied(false), 1500);
+  };
+  // Share to WhatsApp / system share sheet.
+  const shareText = async (t) => {
+    try{ if(navigator.share){ await navigator.share({ text:t }); return; } }catch(e){ if(e && e.name==='AbortError') return; }
+    window.open('https://wa.me/?text='+encodeURIComponent(t), '_blank');
+  };
+
+  const sendChat = async (text) => {
+    const q=(text||'').trim(); if(!q || chatBusy) return;
+    // Ensure there's an active conversation to write into.
+    let convId = activeConv;
+    if(!convId){ convId=newConvId(); setConvs(prev=>[{ id:convId, title:titleFrom([{role:'user',content:q}]), msgs:[], createdAt:Date.now(), updatedAt:Date.now() }, ...prev]); setActiveConv(convId); }
+    const writeMsgs = (updater) => setConvs(prev => prev.map(c => c.id!==convId ? c
+      : { ...c, msgs: typeof updater==='function'?updater(c.msgs):updater, updatedAt:Date.now(), title:(c.title && c.title!=='New chat')?c.title:titleFrom(typeof updater==='function'?updater(c.msgs):updater) }));
+    const prior = (convs.find(c=>c.id===convId)?.msgs)||[];
+    if(!Backend?.chatText){ writeMsgs([...prior,{role:'user',content:q},{role:'assistant',content:'Assistant needs the cloud — set chatUrl in config.js.'}]); setChatInput(''); return; }
+    const history=[...prior.filter(m=>m.role==='user'||m.role==='assistant'), {role:'user',content:q}];
+    writeMsgs([...history, {role:'assistant',content:''}]);
+    setChatInput(''); setChatBusy(true);
+    const ctx = txns.map(slim);
+    let acc='';
+    const res = await Backend.chatText(
+      { messages: history.map(m=>({role:m.role,content:m.content})), transactions:ctx, today:isoToday() },
+      (a)=>{ acc=a; const {think,answer}=splitReply(a); writeMsgs(prev=>{ const c=[...prev]; c[c.length-1]={role:'assistant',content:stripBlocks(answer),reasoning:think}; return c; }); }
+    );
+    const finalText = (res!=null?res:acc) || '';
+    const { think, answer } = splitReply(finalText);
+    const visible = stripBlocks(answer);
+    const action = parseAction(answer);
+    const statement = parseStatement(answer);
+    writeMsgs(prev=>{ const c=[...prev]; c[c.length-1] = (!finalText || /__ERROR__/.test(answer) || res==null)
+      ? {role:'assistant',content:errLine(answer||finalText)}
+      : {role:'assistant',content:visible || (statement?'':'हो गया।'), reasoning:think, action, statement}; return c; });
+    setChatBusy(false);
+  };
+
+  // Find which existing transaction an edit action targets (party + optional
+  // amount/date/method hints; falls back to the latest for that party).
+  const findEditTarget = (action) => {
+    if(!action || action.type!=='edit' || !action.party) return null;
+    const mt = action.match||{};
+    let cand = txns.filter(x=>x.party && x.party.toLowerCase()===String(action.party).toLowerCase());
+    if(mt.amount!=null){ const f=cand.filter(x=>Math.abs((parseFloat(x.amount)||0)-(parseFloat(mt.amount)||0))<1); if(f.length) cand=f; }
+    if(mt.date){ const f=cand.filter(x=>x.date===mt.date); if(f.length) cand=f; }
+    if(mt.method){ const f=cand.filter(x=>x.method===mt.method); if(f.length) cand=f; }
+    return cand.sort((x,y)=>pd(y.date)-pd(x.date))[0] || null;
+  };
+  // Apply an edit action's `changes` onto a transaction, returning the new txn.
+  const applyEditChanges = (t, c={}) => ({ ...t,
+    ...(c.kind&&['borrowed','lent','asset'].includes(c.kind)?{kind:c.kind}:{}),
+    ...(c.party!=null?{party:String(c.party).trim()}:{}),
+    ...(c.amount!=null?{amount:parseFloat(c.amount)||0}:{}), ...(c.rate!=null?{rate:parseFloat(c.rate)||0}:{}),
+    ...(c.rateBasis?{rateBasis:c.rateBasis==='annual'?'annual':'monthly'}:{}), ...(c.interestType?{interestType:c.interestType==='compound'?'compound':'simple'}:{}), ...(c.term!=null?{term:parseFloat(c.term)||0}:{}),
+    ...(c.method?{method:c.method==='bank'?'bank':'cash'}:{}), ...(c.purpose!=null?{purpose:c.purpose}:{}),
+    ...(c.notes!=null?{notes:c.notes}:{}), ...(c.date?{date:c.date}:{}) });
+
+  // Normalise one assistant-proposed txn into our shape.
+  const txnFromAction = (a, idx=0) => ({ id:`${Date.now()}${idx}`,
+    kind:['borrowed','lent','asset'].includes(a.kind)?a.kind:'lent',
+    party:(a.party||'Unknown').trim(), amount:parseFloat(a.amount)||0, date:a.date||isoToday(),
+    rate:parseFloat(a.rate)||0, rateBasis:a.rateBasis==='annual'?'annual':'monthly',
+    interestType:a.interestType==='compound'?'compound':'simple', term:parseFloat(a.term)||0,
+    method:a.method==='bank'?'bank':'cash', purpose:a.purpose||'', notes:a.notes||'', repayments:[] });
+
+  // Apply an assistant-proposed action after the user taps Confirm. Guards against
+  // double-tap (idempotent on the message's `applied` flag).
+  const applyAction = async (msgIdx, action) => {
+    if(!action) return;
+    const cur = chatMsgs[msgIdx];
+    if(cur && cur.applied) return;                 // already saved — no duplicates
+    // Mark applied immediately so a second tap is a no-op.
+    setChatMsgs(prev=>{ const c=[...prev]; if(c[msgIdx]) c[msgIdx]={...c[msgIdx], applied:true}; return c; });
+    let note='Saved ✓';
+    try{
+      if(action.type==='add'){
+        const list = Array.isArray(action.txns) ? action.txns : (action.txn ? [action.txn] : []);
+        for(let i=0;i<list.length;i++) await persistTxn(txnFromAction(list[i], i));
+        note = list.length>1 ? `${list.length} transactions saved ✓` : 'Transaction saved ✓';
+      } else if(action.type==='repayment'){
+        const t=[...txns].filter(x=>x.party && action.party && x.party.toLowerCase()===String(action.party).toLowerCase() && x.kind!=='asset')
+          .sort((x,y)=>pd(y.date)-pd(x.date))[0];
+        if(t){
+          const principal=parseFloat(action.principal)||0;
+          let interest=parseFloat(action.interest)||0;
+          if(action.interestTillToday && interest<=0) interest=Math.round(interestDue(t));
+          await persistTxn({ ...t, repayments:[...(t.repayments||[]), { date:action.date||isoToday(), principal, interest, amount:principal+interest, method:action.method==='bank'?'bank':'cash', note:action.note||'' }] });
+          note='Repayment saved ✓';
+        } else note='No matching loan found';
+      } else if(action.type==='edit' && action.changes){
+        const t=findEditTarget(action);
+        if(t){ await persistTxn(applyEditChanges(t, action.changes)); note='Updated ✓'; }
+        else note='No matching transaction found';
+      }
+      showToast(note);
+    }catch(e){
+      // Roll back the applied flag so the user can retry.
+      setChatMsgs(prev=>{ const c=[...prev]; if(c[msgIdx]) c[msgIdx]={...c[msgIdx], applied:false}; return c; });
+      showToast('Save failed — try again');
+    }
+  };
+
+  // Load an assistant-proposed add into the manual add sheet so the user can edit
+  // before saving. Works for a single-txn action.
+  const editAction = (action) => {
+    const a = (action && (Array.isArray(action.txns)?action.txns[0]:action.txn)) || null;
+    if(!a) return;
+    setEditingId(null);
+    setDraft(draftFrom(a));
+    setTranscript(''); setListenError(''); setAiThinking(false);
+    setAddStep('preview'); setAddOpen(true);
+  };
+
+  const stopRecTimer = () => { if(recTimer.current){ clearInterval(recTimer.current); recTimer.current=null; } };
+  const startChatListen = async () => {
+    if(chatListening){ if(chatRecRef.current) try{chatRecRef.current.stop();}catch(e){} return; }
+    setChatInput('');
+    try{
+      const ctrl = await Backend.startTranscribe({
+        // Records, then OpenAI transcribes (auto-detects Hindi/English). The text
+        // lands in the input box for review — it is not auto-sent.
+        onStatus:(s)=>{
+          if(s==='recording'){ setChatListening(true); setChatTranscribing(false); setRecSecs(0); stopRecTimer(); recTimer.current=setInterval(()=>setRecSecs(n=>n+1),1000); }
+          else if(s==='transcribing'){ setChatListening(false); setChatTranscribing(true); stopRecTimer(); }
+          else if(s==='silent'){ setChatListening(false); setChatTranscribing(false); stopRecTimer(); showToast('कुछ सुनाई नहीं दिया · Didn’t catch that'); }
+        },
+        onPartial:(t)=> setChatInput(t),
+        onFinal:(t)=>{ setChatListening(false); setChatTranscribing(false); stopRecTimer(); chatRecRef.current=null; if(t && t.trim()) setChatInput(t); },
+        onError:()=>{ setChatListening(false); setChatTranscribing(false); stopRecTimer(); },
+      });
+      chatRecRef.current = ctrl;
+      if(ctrl.unavailable){ chatRecRef.current=null; setChatListening(false); setChatTranscribing(false); stopRecTimer(); }
+    }catch(e){ setChatListening(false); setChatTranscribing(false); stopRecTimer(); }
+  };
+
+  // Persist conversations locally; auto-scroll the open chat as it streams.
+  useEffect(()=>{ saveChats(uid, convs); }, [convs]);
+  useEffect(()=>{ if(chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, [convs, activeConv, screen]);
+
+  /* ---------- derived view model ---------- */
+  let receivable=0,payable=0,monthlyIn=0,monthlyOut=0,assetsTotal=0;
+  txns.forEach(t=>{
+    const acc=interestDue(t), bal=outstanding(t);
+    if(t.kind==='lent'){ receivable+=bal+acc; monthlyIn+=bal*monthlyFrac(t); }
+    else if(t.kind==='borrowed'){ payable+=bal+acc; monthlyOut+=bal*monthlyFrac(t); }
+    else assetsTotal+=t.amount;
+  });
+  const net=receivable-payable;
+  const C=2*Math.PI*54, tot=receivable+payable||1;
+  const gLen=C*(receivable/tot), rLen=C*(payable/tot);
+  const netCompact=compact(net);
+
+  const upcoming = txns.filter(t=>t.kind!=='asset' && outstanding(t)>0).map(t=>{
+    const mat=addMonths(pd(t.date),t.term);
+    const dl=days(TODAY,mat);
+    const due=outstanding(t)+interestFull(t)-accrued(t);
+    const pay=t.kind==='borrowed';
+    return { id:t.id, mat, party:t.party,
+      sub:(pay?'You pay · ':'You receive · ')+compact(interestFull(t))+' interest',
+      amount:compact(due), color:pay?'#E5544B':'#2A9D8F', tint:pay?'#FBEAE7':'#E4F2EF',
+      day:mat.getDate(), mon:MON[mat.getMonth()],
+      daysLeft: dl<0?Math.abs(dl)+'d ago':(dl===0?'today':'in '+dl+'d') };
+  }).sort((a,b)=>a.mat-b.mat).slice(0,5);
+
+  const order=['Ramesh Uncle','Mehta Finance','Priya Shah','Greenfield Plot','Suresh Patel','Deepak Rao','Anil Verma'];
+  const extra=[...new Set(txns.map(t=>t.party))].filter(p=>!order.includes(p));
+  const present=[...order,...extra].filter(p=>txns.some(t=>t.party===p));
+  const cx=175,cy=190,R=140, gn=present.length||1;
+  const nodes=[],edges=[];
+  present.forEach((p,i)=>{
+    const ang=(-90 + i*(360/gn))*Math.PI/180;
+    const x=cx+R*Math.cos(ang), y=cy+R*Math.sin(ang);
+    const pt=txns.filter(t=>t.party===p);
+    const col=pColor(p);
+    const sum=pt.reduce((s,t)=>s+(t.kind==='asset'?t.amount:outstanding(t)),0);
+    // A party with loans but nothing outstanding (and no interest due) is fully
+    // settled — keep them on the map as a standalone, faded node.
+    const hasAsset=pt.some(t=>t.kind==='asset');
+    const settled=!hasAsset && pt.every(t=>outstanding(t)<=0 && interestDue(t)<=0);
+    nodes.push({ name:p, initials:initials(p), color:col, amount:settled?'settled':compact(sum), x, y, settled });
+    edges.push({ x, y, color:settled?'#d8cfc1':col, w:settled?1.5:Math.max(2,Math.min(7,sum/100000)), settled });
+  });
+
+  const grp=(kind)=>{
+    const names=[...new Set(txns.filter(t=>t.kind===kind).map(t=>t.party))];
+    return names.map(p=>{
+      const pt=txns.filter(t=>t.party===p);
+      const principal=pt.reduce((s,t)=>s+outstanding(t),0);
+      const acc=pt.reduce((s,t)=>s+accrued(t),0);
+      const col=pColor(p);
+      const rates=[...new Set(pt.map(t=>t.rate))];
+      const basis=pt.every(t=>t.rateBasis==='annual')?' p.a.':'/mo';
+      return { name:p, initials:initials(p), color:col, tint:tintFor(col),
+        sub:pt.length+(pt.length>1?' loans · ':' loan · ')+(pt[0].purpose||'—'),
+        amount:compact(principal+acc), rate:rates.join('/')+'%'+basis };
+    });
+  };
+  const assetList=txns.filter(t=>t.kind==='asset').map(t=>({
+    name:t.party, initials:initials(t.party), sub:(t.purpose||'Asset')+' · '+fmtDate(pd(t.date)),
+    amount:compact(t.amount) }));
+
+  const KMAP={borrowed:'#E5544B',lent:'#2A9D8F',asset:'#E9A23B'};
+  const KLBL={borrowed:'Borrowed from',lent:'Lent to',asset:'Bought'};
+  let activity=[...txns].sort((a,b)=>pd(b.date)-pd(a.date));
+  if(filter!=='all') activity=activity.filter(t=>t.kind===filter);
+  activity=activity.map((t,i)=>({
+    key:t.id||i, party:t.party, initials:initials(t.party), color:KMAP[t.kind], tint:tintFor(pColor(t.party)),
+    title:KLBL[t.kind]+' '+t.party, date:fmtDate(pd(t.date)),
+    method:t.method==='cash'?'Cash':'Bank',
+    signed:(t.kind==='lent'?'+':t.kind==='borrowed'?'−':'')+compact(t.amount),
+    rate:t.kind==='asset'?'asset':t.rate+'%' }));
+
+  let detail=null;
+  if(detailParty){
+    const p=detailParty, pt=txns.filter(t=>t.party===p);
+    if(pt.length){
+      const kind=pt[0].kind, col=pColor(p);
+      const bal=pt.reduce((s,t)=>s+(t.kind==='asset'?t.amount:outstanding(t)),0);
+      const acc=pt.reduce((s,t)=>s+interestDue(t),0);
+      const settled=pt.every(t=>t.kind==='asset'?false:(outstanding(t)<=0 && interestDue(t)<=0));
+      const rel=kind==='borrowed'?'You borrowed from them':kind==='lent'?'You lent to them':'Asset you own';
+      const netLabel=kind==='borrowed'?'You owe (outstanding + interest)':kind==='lent'?'They owe you (outstanding + interest)':'Asset value';
+      const KLBL2={borrowed:'Borrowed',lent:'Lent',asset:'Asset'};
+      detail={ name:p, initials:initials(p), color:col, tint:tintFor(col), relation:rel, netLabel, settled,
+        net:inr(bal+acc), accrued:compact(acc), totalDue:compact(bal+acc),
+        txns: pt.map((t,i)=>({
+          key:t.id||i, raw:t, amount:inr(t.amount), kind:KLBL2[t.kind], color:KMAP[t.kind], tint:tintFor(pColor(p)),
+          rate:t.kind==='asset'?'—':t.rate+'% '+(t.rateBasis==='annual'?'p.a.':'/mo')+(t.interestType==='compound'?' · compound':''), term:t.kind==='asset'?'—':t.term+' months',
+          start:fmtDate(pd(t.date)),
+          matures:t.kind==='asset'?'—':fmtDate(addMonths(pd(t.date),t.term)),
+          method:t.method==='cash'?'Cash':'Bank transfer',
+          outstanding:t.kind==='asset'?'':compact(outstanding(t)),
+          fullyPaid:t.kind!=='asset' && outstanding(t)<=0 && interestDue(t)<=0,
+          repays:(t.repayments||[]).map((r,j)=>{ const pr=repPrincipal(r), it=repInterest(r); return {key:j, when:fmtDate(pd(r.date)), principal:pr?inr(pr):'', interest:it?inr(it):'', amount:inr(pr+it), method:r.method==='bank'?'Bank':'Cash', note:r.note||''}; }),
+          hasPurpose:!!t.purpose, purpose:t.purpose, hasNotes:!!t.notes, notes:t.notes })) };
+    }
+  }
+
+  const d=draft;
+  let kindOpts=[],partyLabel='Person',draftInterest='₹0';
+  if(d){
+    kindOpts=[['borrowed','Borrowed'],['lent','Lent'],['asset','Asset']].map(([v,l])=>({value:v,label:l}));
+    partyLabel=d.kind==='borrowed'?'From':d.kind==='lent'?'To':'Asset name';
+    const amt=parseFloat(d.amount)||0, rt=parseFloat(d.rate)||0, tm=parseFloat(d.term)||0;
+    const perMonth = d.rateBasis==='annual' ? rt/12 : rt;
+    draftInterest = d.interestType==='compound'
+      ? inr(amt*(Math.pow(1+perMonth/100, tm)-1))   // compound over the term
+      : inr(amt*perMonth/100*tm);                    // simple
+  }
+  const navc=(s)=> screen===s?ACCENT:'#b9afa1';
+  const displayName = (user && (user.name || (user.email||'').split('@')[0])) || 'there';
+  const avatarInitials = initials(displayName).slice(0,2).toUpperCase() || '🙂';
+  const greeting = () => { const h=new Date().getHours(); return h<12?'Good morning':h<17?'Good afternoon':'Good evening'; };
+  const draftV = d || {amount:'',party:'',rate:'',rateBasis:'monthly',interestType:'simple',term:'',date:'',purpose:'',notes:'',kind:'borrowed',method:'cash'};
+  const cloudOn = !!(Backend && (Backend.cloudConfigured || Backend.apiConfigured));
+
+  /* ---------- render ---------- */
+  return (
+    <div className="frameWrap" style={css("min-height:100vh;width:100%;background:radial-gradient(120% 120% at 50% 0%,#efe7db 0%,#e4dccf 100%);display:flex;align-items:center;justify-content:center;padding:40px 20px;font-family:'Nunito',sans-serif;")}>
+      <div className="phone" style={css("position:relative;width:390px;height:844px;background:#FBF6EF;border-radius:46px;box-shadow:0 2px 1px rgba(0,0,0,.04),0 30px 60px -20px rgba(60,40,20,.35),0 0 0 11px #1f1b16,0 0 0 12px #3a3229;overflow:hidden;")}>
+
+        {/* ===== HOME ===== */}
+        {screen==='home' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;")}>
+              <div>
+                <div style={css("font-size:14px;color:#8C8278;font-weight:600;")}>{greeting()},{syncing?' syncing…':''}</div>
+                <div style={css("font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>{displayName}</div>
+              </div>
+              <div onClick={()=>setScreen('settings')} title="Settings" style={css("width:46px;height:46px;border-radius:50%;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px;box-shadow:0 6px 14px -4px rgba(229,84,75,.5);cursor:pointer;")}>{avatarInitials}</div>
+            </div>
+
+            {heroStyle==='ring' ? (
+              <div style={css("background:#2A2420;border-radius:28px;padding:24px 22px;color:#fff;box-shadow:0 18px 36px -16px rgba(42,36,32,.6);margin-bottom:14px;")}>
+                <div style={css("display:flex;align-items:center;gap:20px;")}>
+                  <div style={css("position:relative;width:128px;height:128px;flex:none;")}>
+                    <svg width="128" height="128" viewBox="0 0 128 128" style={css("transform:rotate(-90deg);")}>
+                      <circle cx="64" cy="64" r="54" fill="none" stroke="#3a342d" strokeWidth="15"></circle>
+                      <circle cx="64" cy="64" r="54" fill="none" stroke="#2A9D8F" strokeWidth="15" strokeLinecap="round" strokeDasharray={`${gLen} ${C}`}></circle>
+                      <circle cx="64" cy="64" r="54" fill="none" stroke="#E5544B" strokeWidth="15" strokeLinecap="round" strokeDasharray={`${rLen} ${C}`} strokeDashoffset={`${-gLen}`}></circle>
+                    </svg>
+                    <div style={css("position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;")}>
+                      <span style={css("font-size:10px;color:#a9a298;font-weight:700;text-transform:uppercase;letter-spacing:.5px;")}>Net</span>
+                      <span style={css("font-size:20px;font-weight:800;letter-spacing:-.5px;")}>{netCompact}</span>
+                    </div>
+                  </div>
+                  <div style={css("flex:1;display:flex;flex-direction:column;gap:14px;")}>
+                    <div>
+                      <div style={css("display:flex;align-items:center;gap:7px;")}><span style={css("width:9px;height:9px;border-radius:50%;background:#2A9D8F;")}></span><span style={css("font-size:12px;color:#a9a298;font-weight:700;")}>Owed to you</span></div>
+                      <div style={css("font-size:18px;font-weight:800;letter-spacing:-.3px;margin-top:2px;")}>{inr(receivable)}</div>
+                    </div>
+                    <div>
+                      <div style={css("display:flex;align-items:center;gap:7px;")}><span style={css("width:9px;height:9px;border-radius:50%;background:#E5544B;")}></span><span style={css("font-size:12px;color:#a9a298;font-weight:700;")}>You owe</span></div>
+                      <div style={css("font-size:18px;font-weight:800;letter-spacing:-.3px;margin-top:2px;")}>{inr(payable)}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={css("background:#2A2420;border-radius:28px;padding:22px;color:#fff;box-shadow:0 18px 36px -16px rgba(42,36,32,.6);margin-bottom:14px;")}>
+                <div style={css("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px;")}>
+                  <span style={css("font-size:12px;color:#a9a298;font-weight:700;text-transform:uppercase;letter-spacing:.6px;")}>Net position</span>
+                  <span style={css("font-size:28px;font-weight:900;letter-spacing:-.6px;")}>{netCompact}</span>
+                </div>
+                <div style={css("margin-bottom:14px;")}>
+                  <div style={css("display:flex;justify-content:space-between;margin-bottom:6px;")}><span style={css("font-size:12px;color:#cfc8bd;font-weight:700;")}>Owed to you</span><span style={css("font-size:13px;font-weight:800;")}>{inr(receivable)}</span></div>
+                  <div style={css("height:12px;background:#3a342d;border-radius:8px;overflow:hidden;")}><div style={css(`height:100%;background:#2A9D8F;border-radius:8px;width:${Math.round(receivable/tot*100)}%;`)}></div></div>
+                </div>
+                <div>
+                  <div style={css("display:flex;justify-content:space-between;margin-bottom:6px;")}><span style={css("font-size:12px;color:#cfc8bd;font-weight:700;")}>You owe</span><span style={css("font-size:13px;font-weight:800;")}>{inr(payable)}</span></div>
+                  <div style={css("height:12px;background:#3a342d;border-radius:8px;overflow:hidden;")}><div style={css(`height:100%;background:#E5544B;border-radius:8px;width:${Math.round(payable/tot*100)}%;`)}></div></div>
+                </div>
+              </div>
+            )}
+
+            <div style={css("display:flex;gap:10px;margin-bottom:24px;")}>
+              <div style={css("flex:1;background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;")}>
+                <div style={css("font-size:11px;color:#8C8278;font-weight:700;margin-bottom:4px;")}>Interest in / mo</div>
+                <div style={css("font-size:17px;font-weight:800;color:#2A9D8F;")}>{compact(monthlyIn)}</div>
+              </div>
+              <div style={css("flex:1;background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;")}>
+                <div style={css("font-size:11px;color:#8C8278;font-weight:700;margin-bottom:4px;")}>Interest out / mo</div>
+                <div style={css("font-size:17px;font-weight:800;color:#E5544B;")}>{compact(monthlyOut)}</div>
+              </div>
+              <div style={css("flex:1;background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;")}>
+                <div style={css("font-size:11px;color:#8C8278;font-weight:700;margin-bottom:4px;")}>Assets</div>
+                <div style={css("font-size:17px;font-weight:800;color:#E9A23B;")}>{compact(assetsTotal)}</div>
+              </div>
+            </div>
+
+            <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;")}>
+              <span style={css("font-size:17px;font-weight:800;color:#2A2420;")}>Upcoming</span>
+              <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>{txns.filter(t=>t.kind!=='asset').length} due</span>
+            </div>
+            <div style={css("display:flex;flex-direction:column;gap:10px;")}>
+              {upcoming.map(u=>(
+                <div key={u.id} onClick={()=>openParty(u.party)} style={css("background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;display:flex;align-items:center;gap:13px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:14px;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${u.tint};`)}>
+                    <span style={css(`font-size:16px;font-weight:900;color:${u.color};line-height:1;`)}>{u.day}</span>
+                    <span style={css(`font-size:9px;font-weight:800;color:${u.color};text-transform:uppercase;`)}>{u.mon}</span>
+                  </div>
+                  <div style={css("flex:1;min-width:0;")}>
+                    <div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{u.party}</div>
+                    <div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{u.sub}</div>
+                  </div>
+                  <div style={css("text-align:right;")}>
+                    <div style={css(`font-size:15px;font-weight:800;color:${u.color};`)}>{u.amount}</div>
+                    <div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{u.daysLeft}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== GRAPH ===== */}
+        {screen==='graph' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("margin-bottom:6px;font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>Money Map</div>
+            <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:8px;")}>Tap any node to see the relationship</div>
+            <div style={css("position:relative;width:350px;height:380px;margin:0 auto;")}>
+              <svg width="350" height="380" style={css("position:absolute;inset:0;overflow:visible;")}>
+                {edges.map((e,i)=>(
+                  <line key={i} x1="175" y1="190" x2={e.x} y2={e.y} stroke={e.color} strokeWidth={e.w} strokeLinecap="round" opacity="0.45"></line>
+                ))}
+              </svg>
+              <div style={css("position:absolute;left:175px;top:190px;transform:translate(-50%,-50%);width:78px;height:78px;border-radius:50%;background:#2A2420;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 24px -8px rgba(42,36,32,.6);z-index:5;")}>
+                <span style={css("font-size:18px;font-weight:900;")}>You</span>
+                <span style={css("font-size:9px;font-weight:700;color:#a9a298;")}>{netCompact}</span>
+              </div>
+              {nodes.map((n,i)=>(
+                <div key={i} onClick={()=>openParty(n.name)} style={css(`position:absolute;left:${n.x}px;top:${n.y}px;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:pointer;z-index:6;opacity:${n.settled?0.62:1};`)}>
+                  <div style={css(`width:54px;height:54px;border-radius:50%;background:#fff;border:${n.settled?'2px dashed #c7bcab':'3px solid '+n.color};display:flex;align-items:center;justify-content:center;color:${n.settled?'#a89f93':n.color};font-weight:800;font-size:15px;box-shadow:0 6px 14px -6px rgba(60,40,20,.4);`)}>{n.initials}</div>
+                  <div style={css("font-size:11px;font-weight:800;color:#2A2420;margin-top:5px;text-align:center;max-width:78px;line-height:1.15;white-space:nowrap;")}>{n.name}</div>
+                  <div style={css(`font-size:10px;font-weight:800;color:${n.settled?'#a89f93':n.color};margin-top:2px;`)}>{n.settled?'✓ settled':n.amount}</div>
+                </div>
+              ))}
+            </div>
+            <div style={css("display:flex;justify-content:center;gap:18px;margin-top:8px;flex-wrap:wrap;")}>
+              <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#E5544B;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>You borrowed</span></div>
+              <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#2A9D8F;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>You lent</span></div>
+              <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#E9A23B;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>Asset</span></div>
+            </div>
+          </div>
+        )}
+
+        {/* ===== PEOPLE ===== */}
+        {screen==='people' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("margin-bottom:18px;font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>People &amp; Assets</div>
+            <div style={css("font-size:13px;font-weight:800;color:#E5544B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;")}>You owe</div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;margin-bottom:24px;")}>
+              {grp('borrowed').map((p,i)=>(
+                <div key={i} onClick={()=>openParty(p.name)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:50%;flex:none;background:${p.tint};display:flex;align-items:center;justify-content:center;color:${p.color};font-weight:800;font-size:15px;`)}>{p.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}><div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{p.name}</div><div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{p.sub}</div></div>
+                  <div style={css("text-align:right;")}><div style={css("font-size:15px;font-weight:800;color:#E5544B;")}>{p.amount}</div><div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{p.rate}</div></div>
+                </div>
+              ))}
+            </div>
+            <div style={css("font-size:13px;font-weight:800;color:#2A9D8F;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;")}>Owes you</div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;margin-bottom:24px;")}>
+              {grp('lent').map((p,i)=>(
+                <div key={i} onClick={()=>openParty(p.name)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:50%;flex:none;background:${p.tint};display:flex;align-items:center;justify-content:center;color:${p.color};font-weight:800;font-size:15px;`)}>{p.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}><div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{p.name}</div><div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{p.sub}</div></div>
+                  <div style={css("text-align:right;")}><div style={css("font-size:15px;font-weight:800;color:#2A9D8F;")}>{p.amount}</div><div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{p.rate}</div></div>
+                </div>
+              ))}
+            </div>
+            <div style={css("font-size:13px;font-weight:800;color:#E9A23B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;")}>Assets</div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;")}>
+              {assetList.map((p,i)=>(
+                <div key={i} onClick={()=>openParty(p.name)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css("width:44px;height:44px;border-radius:14px;flex:none;background:#FBF1DC;display:flex;align-items:center;justify-content:center;color:#E9A23B;font-weight:800;font-size:15px;")}>{p.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}><div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{p.name}</div><div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{p.sub}</div></div>
+                  <div style={css("text-align:right;")}><div style={css("font-size:15px;font-weight:800;color:#E9A23B;")}>{p.amount}</div></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== ACTIVITY ===== */}
+        {screen==='activity' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("margin-bottom:14px;font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>Activity</div>
+            <div style={css("display:flex;gap:8px;margin-bottom:16px;")}>
+              {[['all','All'],['borrowed','Borrowed'],['lent','Lent'],['asset','Assets']].map(([v,l])=>(
+                <button key={v} onClick={()=>setFilter(v)} style={css(chipStyle(filter===v))}>{l}</button>
+              ))}
+            </div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;")}>
+              {activity.map((t)=>(
+                <div key={t.key} onClick={()=>openParty(t.party)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:50%;flex:none;background:${t.tint};display:flex;align-items:center;justify-content:center;color:${t.color};font-weight:800;font-size:15px;`)}>{t.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}>
+                    <div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{t.title}</div>
+                    <div style={css("display:flex;align-items:center;gap:6px;margin-top:2px;")}>
+                      <span style={css("font-size:11px;font-weight:700;color:#8C8278;")}>{t.date}</span>
+                      <span style={css("font-size:10px;font-weight:800;color:#a89f93;padding:1px 7px;border-radius:20px;background:#f3ede3;")}>{t.method}</span>
+                    </div>
+                  </div>
+                  <div style={css("text-align:right;")}><div style={css(`font-size:15px;font-weight:800;color:${t.color};`)}>{t.signed}</div><div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{t.rate}</div></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== DETAIL ===== */}
+        {screen==='detail' && detail && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:54px 20px 40px;background:#FBF6EF;z-index:30;animation:fadeIn .2s ease;")}>
+            <button onClick={()=>{ setScreen(back||'people'); setDetailParty(null); }} style={css("background:#fff;border:1px solid #efe7db;width:40px;height:40px;border-radius:50%;font-size:18px;font-weight:800;color:#2A2420;cursor:pointer;margin-bottom:16px;")}>‹</button>
+            <div style={css("display:flex;align-items:center;gap:14px;margin-bottom:20px;")}>
+              <div style={css(`width:60px;height:60px;border-radius:50%;flex:none;background:${detail.tint};display:flex;align-items:center;justify-content:center;color:${detail.color};font-weight:800;font-size:20px;`)}>{detail.initials}</div>
+              <div>
+                <div style={css("font-size:22px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>{detail.name}</div>
+                <div style={css(`font-size:13px;font-weight:700;color:${detail.color};`)}>{detail.relation}</div>
+              </div>
+            </div>
+            <div style={css(`background:${detail.color};border-radius:24px;padding:20px;color:#fff;margin-bottom:18px;box-shadow:0 14px 28px -14px rgba(0,0,0,.4);`)}>
+              <div style={css("font-size:12px;font-weight:700;opacity:.85;")}>{detail.netLabel}</div>
+              <div style={css("font-size:30px;font-weight:900;letter-spacing:-.6px;margin:2px 0 14px;")}>{detail.net}</div>
+              <div style={css("display:flex;gap:10px;")}>
+                <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Interest accrued</div><div style={css("font-size:16px;font-weight:800;")}>{detail.accrued}</div></div>
+                <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Due at maturity</div><div style={css("font-size:16px;font-weight:800;")}>{detail.totalDue}</div></div>
+              </div>
+            </div>
+            <div style={css("font-size:14px;font-weight:800;color:#2A2420;margin-bottom:10px;")}>Transactions</div>
+            <div style={css("display:flex;flex-direction:column;gap:10px;")}>
+              {detail.txns.map((t)=>(
+                <div key={t.key} style={css("background:#fff;border-radius:18px;padding:15px;border:1px solid #efe7db;")}>
+                  <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;")}>
+                    <span style={css("font-size:16px;font-weight:800;color:#2A2420;")}>{t.amount}</span>
+                    <span style={css(`font-size:11px;font-weight:800;color:${t.color};padding:3px 10px;border-radius:20px;background:${t.tint};`)}>{t.kind}</span>
+                  </div>
+                  <div style={css("display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:10px;")}>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Rate</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.rate}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Term</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.term}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Started</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.start}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Matures</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.matures}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Via</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.method}</div></div>
+                    {t.outstanding && <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Outstanding</div><div style={css(`font-size:13px;font-weight:800;color:${t.color};`)}>{t.outstanding}</div></div>}
+                    {t.fullyPaid && <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Status</div><div style={css("font-size:13px;font-weight:800;color:#2A9D8F;")}>✓ Settled</div></div>}
+                  </div>
+                  {t.hasPurpose && <div style={css("font-size:13px;font-weight:600;color:#6f665c;background:#f7f1e7;border-radius:12px;padding:9px 11px;")}>{t.purpose}</div>}
+                  {t.hasNotes && <div style={css("font-size:12px;font-weight:600;color:#8C8278;margin-top:8px;font-style:italic;")}>“{t.notes}”</div>}
+                  {t.repays.length>0 && (
+                    <div style={css("margin-top:10px;border-top:1px dashed #ece4d8;padding-top:9px;")}>
+                      <div style={css("font-size:10px;font-weight:800;color:#a89f93;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;")}>Repayments</div>
+                      {t.repays.map(r=>(
+                        <div key={r.key} style={css("display:flex;align-items:center;justify-content:space-between;padding:3px 0;gap:8px;")}>
+                          <span style={css("font-size:12px;font-weight:700;color:#6f665c;")}>{r.when} · {r.method}{r.principal&&r.interest?' · principal+interest':r.interest?' · interest':''}{r.note?' · '+r.note:''}</span>
+                          <span style={css("font-size:13px;font-weight:800;color:#2A9D8F;white-space:nowrap;")}>{r.principal&&r.interest?(r.principal+' + '+r.interest):r.amount}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={css("display:flex;gap:8px;margin-top:12px;")}>
+                    {t.raw.kind!=='asset' && <button onClick={()=>openRepay(t.raw)} style={css("flex:1;border:1px solid #dcebe6;background:#f1f7f5;color:#2A9D8F;border-radius:11px;padding:9px 0;font-size:12px;font-weight:800;cursor:pointer;")}>＋ Repayment</button>}
+                    <button onClick={()=>editTxn(t.raw)} style={css("flex:1;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:11px;padding:9px 0;font-size:12px;font-weight:800;cursor:pointer;")}>Edit</button>
+                    <button onClick={()=>setConfirmDelete(t.raw)} style={css("flex:none;border:1px solid #f3d6d2;background:#fdf0ee;color:#E5544B;border-radius:11px;padding:9px 14px;font-size:12px;font-weight:800;cursor:pointer;")}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== ASSISTANT (Munshi) ===== */}
+        {screen==='assistant' && (
+          <div style={css("position:absolute;inset:0;display:flex;flex-direction:column;")}>
+            {/* Header */}
+            <div style={css("padding:52px 16px 12px;border-bottom:1px solid #efe7db;background:#FBF6EF;display:flex;align-items:center;gap:10px;")}>
+              {active ? (
+                <button onClick={closeConv} title="Back to chats" style={css("flex:none;width:38px;height:38px;border-radius:12px;border:1px solid #ece4d8;background:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;")}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6f665c" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+                </button>
+              ) : (
+                <div style={css("width:40px;height:40px;border-radius:13px;flex:none;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:18px;")}>₹</div>
+              )}
+              <div style={css("flex:1;min-width:0;")}>
+                <div style={css("font-size:18px;font-weight:800;color:#2A2420;letter-spacing:-.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{active ? (active.title||'Chat') : 'Munshi'}</div>
+                <div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{active ? 'हिसाब-किताब · Hindi/English' : 'आपकी सारी बातचीत · सभी हिसाब'}</div>
+              </div>
+              <button onClick={newChat} title="New chat" style={css("flex:none;width:38px;height:38px;border-radius:12px;border:none;background:#2A2420;display:flex;align-items:center;justify-content:center;cursor:pointer;")}>
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+              </button>
+            </div>
+
+            {/* ---- Conversation list (no chat open) ---- */}
+            {!active && (
+              <div className="scr" style={css("flex:1;overflow-y:auto;padding:14px 16px 110px;display:flex;flex-direction:column;gap:10px;")}>
+                <button onClick={newChat} style={css("display:flex;align-items:center;gap:10px;border:1.5px dashed #d8cab4;background:#fff;color:#2A2420;border-radius:14px;padding:13px 14px;font-size:14px;font-weight:800;cursor:pointer;")}>
+                  <span style={css("width:24px;height:24px;border-radius:8px;background:linear-gradient(140deg,#F2B07A,#E5544B);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;")}>＋</span>
+                  New chat — कुछ भी पूछें
+                </button>
+                {convs.length===0 ? (
+                  <div style={css("margin-top:18px;text-align:center;")}>
+                    <div style={css("font-size:14px;font-weight:800;color:#2A2420;margin-bottom:6px;")}>नमस्ते! मैं Munshi हूँ।</div>
+                    <div style={css("font-size:12px;font-weight:600;color:#8C8278;margin-bottom:16px;line-height:1.5;")}>ब्याज पूछें, नया लेन-देन जोड़ें, या किसी का हिसाब बनवाकर WhatsApp पर भेजें।</div>
+                    <div style={css("display:flex;flex-direction:column;gap:8px;")}>
+                      {['इस महीने मुझे कुल कितना ब्याज मिलेगा?','Suresh ka hisab bana ke do (bhejne ke liye)','Ramesh ko 5 lakh diye 2 rupaye saikda 6 mahine','अगर सब डेढ़ की जगह दो रुपए होता तो कितना फ़र्क?'].map((s,i)=>(
+                        <button key={i} onClick={()=>sendChat(s)} style={css("text-align:left;border:1px solid #e3d9c9;background:#fff;color:#2A2420;border-radius:14px;padding:11px 13px;font-size:13px;font-weight:700;cursor:pointer;")}>{s}</button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={css("font-size:11px;font-weight:800;color:#a89f93;text-transform:uppercase;letter-spacing:.5px;margin:8px 2px 2px;")}>Recent</div>
+                    {[...convs].sort((a,b)=>b.updatedAt-a.updatedAt).map(c=>{
+                      const last=[...c.msgs].reverse().find(m=>m.content);
+                      return (
+                        <div key={c.id} onClick={()=>openConv(c.id)} style={css("display:flex;align-items:center;gap:10px;border:1px solid #ece4d8;background:#fff;border-radius:14px;padding:12px 13px;cursor:pointer;")}>
+                          <div style={css("width:34px;height:34px;border-radius:10px;flex:none;background:#f7f1e7;display:flex;align-items:center;justify-content:center;")}>
+                            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#b08a5a" strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 9 9 0 0 1-3.8-.8L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 17 0Z"></path></svg>
+                          </div>
+                          <div style={css("flex:1;min-width:0;")}>
+                            <div style={css("font-size:13.5px;font-weight:800;color:#2A2420;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{c.title||'Chat'}</div>
+                            <div style={css("font-size:11.5px;font-weight:600;color:#a89f93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{last?last.content.replace(/\s+/g,' ').slice(0,46):'…'}</div>
+                          </div>
+                          <button onClick={(e)=>{e.stopPropagation(); deleteConv(c.id);}} title="Delete" style={css("flex:none;width:28px;height:28px;border-radius:8px;border:none;background:none;color:#cbb9a9;display:flex;align-items:center;justify-content:center;cursor:pointer;")}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path></svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ---- Open conversation ---- */}
+            {active && (<>
+            <div ref={chatScrollRef} className="scr" style={css("flex:1;overflow-y:auto;padding:16px 16px 150px;display:flex;flex-direction:column;gap:12px;")}>
+              {chatMsgs.length===0 && (
+                <div style={css("margin:auto 0;text-align:center;")}>
+                  <div style={css("font-size:15px;font-weight:800;color:#2A2420;margin-bottom:6px;")}>नमस्ते! बोलिए, क्या हिसाब देखें?</div>
+                  <div style={css("font-size:12px;font-weight:600;color:#8C8278;margin-bottom:18px;line-height:1.5;max-width:280px;margin-left:auto;margin-right:auto;")}>ब्याज पूछें, किश्त जोड़ें, नया लेन-देन बोलें, या किसी का हिसाब बनवाकर भेजें — हिंदी या English में।</div>
+                  <div style={css("display:flex;flex-direction:column;gap:8px;max-width:300px;margin:0 auto;")}>
+                    {['इस महीने मुझे कुल कितना ब्याज मिलेगा?','Suresh ka hisab bana ke do bhejne ke liye','23 lakh ka dedh rupaye saikda 3 mahine ka byaj?','Ramesh ko 5 lakh diye 2 rupaye saikda 6 mahine'].map((s,i)=>(
+                      <button key={i} onClick={()=>sendChat(s)} style={css("text-align:left;border:1px solid #e3d9c9;background:#fff;color:#2A2420;border-radius:14px;padding:11px 13px;font-size:13px;font-weight:700;cursor:pointer;")}>{s}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {chatMsgs.map((m,i)=>(
+                m.role==='user' ? (
+                  <div key={i} style={css("align-self:flex-end;max-width:82%;background:#2A2420;color:#fff;border-radius:18px 18px 4px 18px;padding:11px 14px;font-size:14px;font-weight:600;line-height:1.5;white-space:pre-wrap;")}>{m.content}</div>
+                ) : (
+                  <div key={i} style={css("align-self:flex-start;max-width:88%;display:flex;flex-direction:column;gap:8px;")}>
+                    {m.reasoning && (
+                      <div style={css("font-size:12px;font-weight:600;color:#a89f93;font-style:italic;line-height:1.5;padding:0 4px;")}>
+                        💭 {m.content||m.statement ? 'सोचा' : ('सोच रहा हूँ… '+m.reasoning.replace(/\s+/g,' ').slice(-110))}
+                      </div>
+                    )}
+                    {(m.content || (!m.reasoning && !m.statement)) && (
+                      <div style={css("background:#fff;border:1px solid #efe7db;color:#2A2420;border-radius:18px 18px 18px 4px;padding:12px 14px;font-size:14px;font-weight:600;line-height:1.55;white-space:pre-wrap;")}>{m.content ? renderRich(m.content) : (chatBusy && i===chatMsgs.length-1 ? '…' : '')}</div>
+                    )}
+                    {m.statement && (
+                      <div style={css("background:#fff;border:1.5px solid #dcebe6;border-radius:16px;overflow:hidden;")}>
+                        <div style={css("background:#f1f7f5;padding:8px 13px;font-size:11px;font-weight:800;color:#2A9D8F;text-transform:uppercase;letter-spacing:.4px;")}>📄 हिसाब · भेजने के लिए तैयार</div>
+                        <div style={css("padding:12px 14px;font-size:13.5px;font-weight:600;color:#2A2420;line-height:1.6;white-space:pre-wrap;")}>{m.statement}</div>
+                        <div style={css("display:flex;gap:8px;padding:0 12px 12px;")}>
+                          <button onClick={()=>shareText(m.statement)} style={css("flex:1;border:none;background:#25D366;color:#fff;border-radius:11px;padding:10px 0;font-size:13px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;")}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 2a10 10 0 0 0-8.6 15l-1.3 4.8 4.9-1.3A10 10 0 1 0 12 2zm0 18a8 8 0 0 1-4.1-1.1l-.3-.2-2.9.8.8-2.8-.2-.3A8 8 0 1 1 12 20zm4.5-5.9c-.2-.1-1.4-.7-1.6-.8s-.4-.1-.5.1l-.7.9c-.1.2-.3.2-.5.1a6.5 6.5 0 0 1-1.9-1.2 7.2 7.2 0 0 1-1.3-1.7c-.1-.2 0-.4.1-.5l.4-.5c.1-.2.1-.3 0-.5l-.7-1.7c-.2-.4-.4-.4-.5-.4h-.5a1 1 0 0 0-.7.3 2.9 2.9 0 0 0-.9 2.1 5 5 0 0 0 1.1 2.7 11.4 11.4 0 0 0 4.4 3.9c2 .8 2 .5 2.4.5a2.5 2.5 0 0 0 1.7-1.2 2 2 0 0 0 .1-1.2c0-.1-.2-.2-.4-.3z"></path></svg>
+                            Send
+                          </button>
+                          <button onClick={()=>copyText(m.statement)} style={css("flex:1;border:1px solid #e3d9c9;background:#fff;color:#2A2420;border-radius:11px;padding:10px 0;font-size:13px;font-weight:800;cursor:pointer;")}>{copied?'✓ Copied':'Copy'}</button>
+                        </div>
+                      </div>
+                    )}
+                    {m.action && (()=>{ const A=m.action;
+                      const addList = A.type==='add' ? (Array.isArray(A.txns)?A.txns:(A.txn?[A.txn]:[])) : [];
+                      const lbl = (a)=>`${a.kind==='lent'?'Lend':a.kind==='borrowed'?'Borrow':'Asset'} ${inr(parseFloat(a.amount)||0)} · ${a.party||'—'}${a.rate?` · ${a.rate}% ${a.rateBasis==='annual'?'p.a.':'/mo'}${a.interestType==='compound'?' compound':''}`:''}${a.term?` · ${a.term} mo`:''} · ${a.method==='bank'?'Bank':'Cash'}`;
+                      const editTgt = A.type==='edit' ? findEditTarget(A) : null;
+                      const editRes = editTgt ? applyEditChanges(editTgt, A.changes||{}) : null;
+                      const changed = A.type==='edit' ? Object.keys(A.changes||{}) : [];
+                      return (
+                      <div style={css("background:#f1f7f5;border:1px solid #dcebe6;border-radius:14px;padding:11px 13px;")}>
+                        <div style={css("font-size:11px;font-weight:800;color:#2A9D8F;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;")}>{m.applied?(A.type==='edit'?'✓ Updated':'✓ Recorded'):(A.type==='edit'?'Suggested edit':(addList.length>1?`Suggested · ${addList.length} entries`:'Suggested entry'))}</div>
+                        <div style={css("font-size:13px;font-weight:700;color:#2A2420;margin-bottom:10px;display:flex;flex-direction:column;gap:5px;")}>{
+                          A.type==='add' ? addList.map((a,k)=>(<div key={k}>{addList.length>1?`${k+1}. `:''}{lbl(a)}</div>)) :
+                          A.type==='repayment' ? (()=>{ const pr=parseFloat(A.principal)||0, it=parseFloat(A.interest)||0; const tip=A.interestTillToday&&it<=0?' + interest till today':''; return <div>{`Repayment from ${A.party}: ${pr?'principal '+inr(pr):''}${pr&&it?' + ':''}${it?'interest '+inr(it):''}${tip}`}</div>; })() :
+                          A.type==='edit' ? (editRes ? (<>
+                            <div>{lbl(editRes)}</div>
+                            {changed.length>0 && <div style={css("font-size:11px;font-weight:700;color:#2A9D8F;")}>changed: {changed.join(', ')}</div>}
+                          </>) : <div>{`Edit ${A.party} → ${Object.entries(A.changes||{}).map(([k,v])=>k+': '+(k==='amount'?inr(parseFloat(v)||0):v)).join(', ')}`}</div>) : <div>Action</div>
+                        }</div>
+                        {!m.applied && (
+                          <div style={css("display:flex;gap:8px;")}>
+                            <button onClick={()=>applyAction(i, A)} style={css("flex:1;border:none;background:#2A9D8F;color:#fff;border-radius:11px;padding:9px 0;font-size:13px;font-weight:800;cursor:pointer;")}>Confirm &amp; save</button>
+                            {A.type==='add' && <button onClick={()=>editAction(A)} style={css("flex:none;border:1px solid #e3d9c9;background:#fff;color:#2A2420;border-radius:11px;padding:9px 14px;font-size:13px;font-weight:800;cursor:pointer;")}>Edit</button>}
+                            <button onClick={()=>setChatMsgs(prev=>{const c=[...prev];c[i]={...c[i],action:null};return c;})} style={css("flex:none;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:11px;padding:9px 12px;font-size:13px;font-weight:800;cursor:pointer;")}>✕</button>
+                          </div>
+                        )}
+                      </div>
+                      ); })()}
+                  </div>
+                )
+              ))}
+            </div>
+
+            {(chatListening || chatTranscribing) && (
+              <div onClick={()=>{ if(chatListening) startChatListen(); }} style={css(`position:absolute;left:14px;right:14px;bottom:140px;z-index:36;background:${chatListening?'#E5544B':'#E9A23B'};color:#fff;border-radius:16px;padding:11px 16px;display:flex;align-items:center;gap:11px;box-shadow:0 12px 28px -10px rgba(0,0,0,.4);animation:floatUp .25s ease;cursor:${chatListening?'pointer':'default'};`)}>
+                {chatListening ? (<>
+                  <span style={css("position:relative;width:11px;height:11px;flex:none;display:flex;align-items:center;justify-content:center;")}>
+                    <span style={css("position:absolute;inset:0;border-radius:50%;background:#fff;animation:pulseRing 1.5s ease-out infinite;")}></span>
+                    <span style={css("width:11px;height:11px;border-radius:50%;background:#fff;")}></span>
+                  </span>
+                  <span style={css("display:flex;align-items:flex-end;gap:3px;height:22px;")}>
+                    <span style={css("width:3px;background:#fff;border-radius:2px;animation:mb1 .9s ease-in-out infinite;")}></span>
+                    <span style={css("width:3px;background:#fff;border-radius:2px;animation:mb2 .9s ease-in-out infinite;")}></span>
+                    <span style={css("width:3px;background:#fff;border-radius:2px;animation:mb3 .9s ease-in-out infinite;")}></span>
+                    <span style={css("width:3px;background:#fff;border-radius:2px;animation:mb4 .9s ease-in-out infinite;")}></span>
+                  </span>
+                  <span style={css("flex:1;font-size:13.5px;font-weight:800;")}>सुन रहा हूँ… Recording</span>
+                  <span style={css("font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;opacity:.9;")}>{Math.floor(recSecs/60)}:{String(recSecs%60).padStart(2,'0')}</span>
+                  <span style={css("font-size:12px;font-weight:800;background:rgba(255,255,255,.22);border-radius:9px;padding:5px 9px;")}>Tap to stop</span>
+                </>) : (<>
+                  <span style={css("display:flex;align-items:flex-end;gap:3px;height:18px;")}>
+                    <span style={css("width:3px;background:#fff;border-radius:2px;animation:mb2 .7s ease-in-out infinite;")}></span>
+                    <span style={css("width:3px;background:#fff;border-radius:2px;animation:mb3 .7s ease-in-out infinite;")}></span>
+                    <span style={css("width:3px;background:#fff;border-radius:2px;animation:mb1 .7s ease-in-out infinite;")}></span>
+                  </span>
+                  <span style={css("flex:1;font-size:13.5px;font-weight:800;")}>Transcribing… लिख रहा हूँ</span>
+                </>)}
+              </div>
+            )}
+            <div style={css("position:absolute;left:0;right:0;bottom:88px;background:#FBF6EF;border-top:1px solid #efe7db;padding:10px 14px;display:flex;align-items:center;gap:8px;z-index:34;")}>
+              <button onClick={startChatListen} title="Speak — Hindi or English (auto-detect)" style={css(`flex:none;width:42px;height:42px;border-radius:13px;border:none;background:${chatListening?'#E5544B':chatTranscribing?'#E9A23B':'#f3ede3'};display:flex;align-items:center;justify-content:center;cursor:pointer;`)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill={chatListening||chatTranscribing?'#fff':'#8C8278'}><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M6 11a6 6 0 0 0 12 0" fill="none" stroke={chatListening||chatTranscribing?'#fff':'#8C8278'} strokeWidth="2" strokeLinecap="round"></path><path d="M12 17v3" fill="none" stroke={chatListening||chatTranscribing?'#fff':'#8C8278'} strokeWidth="2" strokeLinecap="round"></path></svg>
+              </button>
+              <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')sendChat(chatInput);}} placeholder={chatListening?'सुन रहा हूँ… (फिर से दबाकर रोकें)':chatTranscribing?'Transcribing…':'Ask anything — Hindi, English or Hinglish'} style={css("flex:1;border:1px solid #e3d9c9;background:#fff;border-radius:14px;padding:12px 14px;font-size:14px;font-weight:600;color:#2A2420;outline:none;")} />
+              <button onClick={()=>sendChat(chatInput)} disabled={chatBusy} style={css(`flex:none;width:42px;height:42px;border-radius:13px;border:none;background:${chatBusy?'#cbb9a9':ACCENT};display:flex;align-items:center;justify-content:center;cursor:pointer;`)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"></path></svg>
+              </button>
+            </div>
+            </>)}
+          </div>
+        )}
+
+        {/* ===== SETTINGS ===== */}
+        {screen==='settings' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 120px;animation:fadeIn .2s ease;")}>
+            <div style={css("display:flex;align-items:center;gap:12px;margin-bottom:22px;")}>
+              <button onClick={()=>setScreen('home')} style={css("background:#fff;border:1px solid #efe7db;width:40px;height:40px;border-radius:50%;font-size:18px;font-weight:800;color:#2A2420;cursor:pointer;")}>‹</button>
+              <div style={css("font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>Settings</div>
+            </div>
+
+            {/* Profile card */}
+            <div style={css("background:#2A2420;border-radius:24px;padding:20px;color:#fff;display:flex;align-items:center;gap:14px;margin-bottom:18px;box-shadow:0 16px 32px -16px rgba(42,36,32,.6);")}>
+              <div style={css("width:58px;height:58px;border-radius:50%;flex:none;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;")}>{avatarInitials}</div>
+              <div style={css("flex:1;min-width:0;")}>
+                <div style={css("font-size:18px;font-weight:800;letter-spacing:-.3px;")}>{displayName}</div>
+                <div style={css("font-size:13px;font-weight:600;color:#a9a298;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{(user&&user.email)||'Guest'}</div>
+              </div>
+            </div>
+
+            {/* Preferences */}
+            <div style={css("font-size:11px;font-weight:800;color:#a89f93;text-transform:uppercase;letter-spacing:.5px;margin:6px 4px 8px;")}>Preferences</div>
+            <div style={css("background:#fff;border:1px solid #efe7db;border-radius:18px;overflow:hidden;margin-bottom:18px;")}>
+              <div style={css("padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #f1ebe1;")}>
+                <div>
+                  <div style={css("font-size:14px;font-weight:800;color:#2A2420;")}>Home chart style</div>
+                  <div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>Ring donut or stacked bars</div>
+                </div>
+                <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
+                  <button onClick={()=>setHeroStyle('ring')} style={css(seg2Style(heroStyle==='ring'))}>Ring</button>
+                  <button onClick={()=>setHeroStyle('bars')} style={css(seg2Style(heroStyle==='bars'))}>Bars</button>
+                </div>
+              </div>
+              <div style={css("padding:14px 16px;display:flex;align-items:center;justify-content:space-between;")}>
+                <div>
+                  <div style={css("font-size:14px;font-weight:800;color:#2A2420;")}>Cloud sync</div>
+                  <div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{cloudOn?'Your data is synced to the cloud':'Offline — local only'}</div>
+                </div>
+                <span style={css(`font-size:12px;font-weight:800;color:${cloudOn?'#2A9D8F':'#a89f93'};`)}>{cloudOn?'● On':'○ Off'}</span>
+              </div>
+            </div>
+
+            {/* Account */}
+            <div style={css("font-size:11px;font-weight:800;color:#a89f93;text-transform:uppercase;letter-spacing:.5px;margin:6px 4px 8px;")}>Account</div>
+            <div style={css("background:#fff;border:1px solid #efe7db;border-radius:18px;overflow:hidden;margin-bottom:18px;")}>
+              {user && user.sub && (
+                <button onClick={openChangePw} style={css("width:100%;text-align:left;padding:15px 16px;border:none;border-bottom:1px solid #f1ebe1;background:none;cursor:pointer;display:flex;align-items:center;gap:10px;color:#2A2420;font-size:14px;font-weight:800;")}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6f665c" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                  Change password
+                </button>
+              )}
+              <button onClick={onSignOut} style={css("width:100%;text-align:left;padding:15px 16px;border:none;background:none;cursor:pointer;display:flex;align-items:center;gap:10px;color:#E5544B;font-size:14px;font-weight:800;")}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E5544B" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5M21 12H9"></path></svg>
+                Sign out
+              </button>
+            </div>
+
+            <div style={css("text-align:center;font-size:11px;font-weight:700;color:#c2b8a8;")}>Cashflow · powered by Munshi AI</div>
+          </div>
+        )}
+
+        {/* ===== BOTTOM NAV + FAB ===== */}
+        {screen!=='detail' && screen!=='settings' && (
+          <>
+            <div style={css("position:absolute;bottom:0;left:0;right:0;height:88px;background:rgba(251,246,239,.92);backdrop-filter:blur(14px);border-top:1px solid #ece4d8;display:flex;align-items:flex-start;justify-content:space-around;padding:12px 14px 0;z-index:35;")}>
+              <button onClick={()=>setScreen('home')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:54px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('home')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('home')};`)}>Home</span>
+              </button>
+              <button onClick={()=>setScreen('graph')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:54px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('graph')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><circle cx="12" cy="12" r="3"></circle><circle cx="5" cy="5" r="2.2"></circle><circle cx="19" cy="6" r="2.2"></circle><circle cx="18" cy="19" r="2.2"></circle><path d="M10 10 6.5 6.5M14 10.5 17 8M14 14l3 3.5"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('graph')};`)}>Map</span>
+              </button>
+              <button onClick={()=>setScreen('people')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:54px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('people')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20a5.5 5.5 0 0 1 11 0"></path><path d="M16 5.5a3 3 0 0 1 0 5.6M17 20a5.5 5.5 0 0 0-2.5-4.6"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('people')};`)}>People</span>
+              </button>
+              <button onClick={()=>setScreen('activity')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:54px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('activity')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('activity')};`)}>Activity</span>
+              </button>
+              <button onClick={()=>setScreen('assistant')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:54px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('assistant')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 9 9 0 0 1-3.8-.8L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 17 0Z"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('assistant')};`)}>Munshi</span>
+              </button>
+            </div>
+            {screen!=='assistant' && (
+              <button onClick={openAdd} style={css(`position:absolute;right:20px;bottom:104px;width:60px;height:60px;border-radius:22px;border:none;background:${ACCENT};box-shadow:0 12px 26px -8px ${ACCENT_SHADOW};display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:36;`)}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              </button>
+            )}
+          </>
+        )}
+
+        {/* ===== ADD SHEET ===== */}
+        {addOpen && (
+          <div style={css("position:absolute;inset:0;z-index:50;")}>
+            <div onClick={closeAdd} style={css("position:absolute;inset:0;background:rgba(42,36,32,.45);animation:fadeIn .2s ease;")}></div>
+            <div className="scr" style={css("position:absolute;left:0;right:0;bottom:0;max-height:90%;overflow-y:auto;background:#FBF6EF;border-radius:30px 30px 0 0;padding:12px 22px 30px;animation:slideUp .32s cubic-bezier(.2,.9,.3,1);")}>
+              <div style={css("width:42px;height:5px;border-radius:3px;background:#dcd3c5;margin:0 auto 14px;")}></div>
+
+              {addStep==='capture' && (
+                <div style={css("text-align:center;")}>
+                  <div style={css("font-size:20px;font-weight:800;color:#2A2420;margin-bottom:4px;")}>Add a transaction</div>
+                  <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:24px;")}>Just say it out loud — I'll fill in the rest</div>
+                  <div style={css("position:relative;width:104px;height:104px;margin:0 auto 18px;")}>
+                    <span style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};opacity:.25;`)}></span>
+                    <button onClick={startListen} style={css(`position:absolute;inset:0;border:none;border-radius:50%;background:${ACCENT};box-shadow:0 14px 30px -8px ${ACCENT_SHADOW};display:flex;align-items:center;justify-content:center;cursor:pointer;`)}>
+                      <svg width="38" height="38" viewBox="0 0 24 24" fill="#fff"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M6 11a6 6 0 0 0 12 0" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"></path><path d="M12 17v3" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"></path></svg>
+                    </button>
+                  </div>
+                  <div style={css("font-size:13px;font-weight:700;color:#a89f93;margin-bottom:6px;")}>Tap the mic to speak</div>
+                  <div style={css("font-size:11px;font-weight:700;color:#bcae9c;margin-bottom:18px;")}>{cloudOn?'Cloud sync · AI parsing on':'Offline mode · on-device parsing'}</div>
+                  {listenError && <div style={css("font-size:12px;font-weight:700;color:#E5544B;margin-bottom:16px;")}>{listenError}</div>}
+                  <div style={css("display:flex;align-items:center;gap:10px;margin-bottom:14px;")}><span style={css("flex:1;height:1px;background:#e7ddcf;")}></span><span style={css("font-size:11px;font-weight:700;color:#b3a999;")}>OR TYPE IT</span><span style={css("flex:1;height:1px;background:#e7ddcf;")}></span></div>
+                  <div style={css("display:flex;gap:8px;")}>
+                    <input value={typed} onChange={e=>setTyped(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')parseTyped();}} placeholder="e.g. Took 3 lakh from Ravi at 15% for 1 year" style={css("flex:1;border:1px solid #e3d9c9;background:#fff;border-radius:14px;padding:13px 14px;font-size:13px;font-weight:600;color:#2A2420;outline:none;")} />
+                    <button onClick={parseTyped} style={css("border:none;background:#2A2420;color:#fff;border-radius:14px;padding:0 18px;font-size:14px;font-weight:800;cursor:pointer;")}>Go</button>
+                  </div>
+                </div>
+              )}
+
+              {addStep==='listen' && (
+                <div style={css("text-align:center;padding:10px 0 6px;")}>
+                  <div style={css("position:relative;width:104px;height:104px;margin:0 auto 22px;")}>
+                    <span style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};animation:pulseRing 1.6s ease-out infinite;`)}></span>
+                    <span style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};animation:pulseRing 1.6s ease-out infinite .6s;`)}></span>
+                    <div style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};display:flex;align-items:center;justify-content:center;gap:4px;`)}>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb1 .9s ease-in-out infinite;")}></span>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb2 .9s ease-in-out infinite;")}></span>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb3 .9s ease-in-out infinite;")}></span>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb4 .9s ease-in-out infinite;")}></span>
+                    </div>
+                  </div>
+                  <div style={css(`font-size:14px;font-weight:800;color:${ACCENT};margin-bottom:14px;`)}>Listening…</div>
+                  <div style={css("font-size:17px;font-weight:700;color:#2A2420;line-height:1.45;min-height:48px;max-width:280px;margin:0 auto;")}>{transcript}</div>
+                  <button onClick={stopListen} style={css(`margin-top:18px;border:none;background:${ACCENT};color:#fff;border-radius:14px;padding:11px 26px;font-size:14px;font-weight:800;cursor:pointer;box-shadow:0 8px 18px -8px ${ACCENT_SHADOW};`)}>Done</button>
+                </div>
+              )}
+
+              {addStep==='preview' && (
+                <div style={css("animation:floatUp .3s ease;")}>
+                  <div style={css("display:flex;align-items:center;gap:8px;margin-bottom:4px;")}>
+                    <span style={css("width:8px;height:8px;border-radius:50%;background:#2A9D8F;")}></span>
+                    <div style={css("font-size:19px;font-weight:800;color:#2A2420;")}>{editingId?'Edit transaction':"Here's what I caught"}</div>
+                    {aiThinking && <span style={css("font-size:11px;font-weight:800;color:#F2784B;margin-left:auto;")}>✨ refining…</span>}
+                  </div>
+                  {transcript && <div style={css("font-size:13px;font-weight:600;color:#8C8278;background:#f3ede3;border-radius:12px;padding:9px 12px;margin:8px 0 18px;font-style:italic;")}>“{transcript}”</div>}
+
+                  <div style={css("display:flex;gap:8px;margin-bottom:14px;")}>
+                    {kindOpts.map(k=>(
+                      <button key={k.value} onClick={()=>setDraftField('kind',k.value)} style={css(segStyle(draftV.kind===k.value, ACCENT))}>{k.label}</button>
+                    ))}
+                  </div>
+
+                  <div style={css("background:#fff;border:1px solid #efe7db;border-radius:20px;padding:6px 16px;margin-bottom:14px;")}>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Amount</span>
+                      <div style={css("display:flex;align-items:center;gap:2px;")}><span style={css("font-size:17px;font-weight:800;color:#2A2420;")}>₹</span><input value={draftV.amount} onChange={e=>setDraftField('amount',e.target.value)} inputMode="numeric" style={css("width:120px;text-align:right;border:none;background:none;font-size:17px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                    </div>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>{partyLabel}</span>
+                      <input value={draftV.party} onChange={e=>setDraftField('party',e.target.value)} style={css("width:170px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                    </div>
+                    <div style={css("display:flex;gap:14px;border-bottom:1px solid #f1ebe1;")}>
+                      <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;padding:13px 0;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Rate</span>
+                        <div style={css("display:flex;align-items:center;gap:1px;")}><input value={draftV.rate} onChange={e=>setDraftField('rate',e.target.value)} inputMode="decimal" style={css("width:42px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} /><span style={css("font-size:14px;font-weight:800;color:#2A2420;")}>%</span></div>
+                      </div>
+                      <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-left:1px solid #f1ebe1;padding-left:14px;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Months</span>
+                        <input value={draftV.term} onChange={e=>setDraftField('term',e.target.value)} inputMode="numeric" style={css("width:44px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                      </div>
+                    </div>
+                    {draftV.kind!=='asset' && (
+                      <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Rate basis</span>
+                        <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
+                          <button onClick={()=>setDraftField('rateBasis','monthly')} style={css(seg2Style(draftV.rateBasis!=='annual'))}>सैकड़ा /mo</button>
+                          <button onClick={()=>setDraftField('rateBasis','annual')} style={css(seg2Style(draftV.rateBasis==='annual'))}>Yearly p.a.</button>
+                        </div>
+                      </div>
+                    )}
+                    {draftV.kind!=='asset' && (
+                      <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Interest type</span>
+                        <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
+                          <button onClick={()=>setDraftField('interestType','simple')} style={css(seg2Style(draftV.interestType!=='compound'))}>Simple</button>
+                          <button onClick={()=>setDraftField('interestType','compound')} style={css(seg2Style(draftV.interestType==='compound'))}>चक्रवृद्धि</button>
+                        </div>
+                      </div>
+                    )}
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Received via</span>
+                      <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
+                        <button onClick={()=>setDraftField('method','cash')} style={css(seg2Style(draftV.method==='cash'))}>Cash</button>
+                        <button onClick={()=>setDraftField('method','bank')} style={css(seg2Style(draftV.method==='bank'))}>Bank</button>
+                      </div>
+                    </div>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Date</span>
+                      <input type="date" value={draftV.date} onChange={e=>setDraftField('date',e.target.value)} style={css("width:160px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                    </div>
+                    <div style={css("padding:13px 0;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:7px;")}>Purpose</span>
+                      <input value={draftV.purpose} onChange={e=>setDraftField('purpose',e.target.value)} placeholder="What's it for?" style={css("width:100%;border:none;background:none;font-size:15px;font-weight:700;color:#2A2420;outline:none;")} />
+                    </div>
+                  </div>
+
+                  <div style={css("background:#fff;border:1px solid #efe7db;border-radius:16px;padding:13px 14px;margin-bottom:8px;")}>
+                    <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:6px;")}>Notes</span>
+                    <textarea value={draftV.notes} onChange={e=>setDraftField('notes',e.target.value)} placeholder="Add a note (optional)…" rows="2" style={css("width:100%;border:none;background:none;font-size:14px;font-weight:600;color:#2A2420;outline:none;resize:none;")} />
+                  </div>
+
+                  {draftV.kind!=='asset' && (
+                    <div style={css("background:#f1f7f5;border:1px solid #dcebe6;border-radius:14px;padding:11px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;")}>
+                      <span style={css("font-size:12px;font-weight:700;color:#2A9D8F;")}>Interest over {draftV.term||0} mo</span>
+                      <span style={css("font-size:15px;font-weight:800;color:#2A9D8F;")}>{draftInterest}</span>
+                    </div>
+                  )}
+
+                  <div style={css("display:flex;gap:10px;")}>
+                    <button onClick={()=>setAddStep('capture')} style={css("flex:none;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:16px;padding:15px 18px;font-size:14px;font-weight:800;cursor:pointer;")}>Redo</button>
+                    <button onClick={confirmAdd} style={css(`flex:1;border:none;background:${ACCENT};color:#fff;border-radius:16px;padding:15px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 10px 22px -8px ${ACCENT_SHADOW};`)}>{editingId?'Save changes':'Add transaction'}</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ===== CHANGE PASSWORD MODAL ===== */}
+        {pwOpen && (
+          <div style={css("position:absolute;inset:0;z-index:60;")}>
+            <div onClick={()=>setPwOpen(false)} style={css("position:absolute;inset:0;background:rgba(42,36,32,.45);animation:fadeIn .2s ease;")}></div>
+            <div style={css("position:absolute;left:0;right:0;bottom:0;background:#FBF6EF;border-radius:30px 30px 0 0;padding:14px 22px 28px;animation:slideUp .3s cubic-bezier(.2,.9,.3,1);")}>
+              <div style={css("width:42px;height:5px;border-radius:3px;background:#dcd3c5;margin:0 auto 16px;")}></div>
+              <div style={css("font-size:19px;font-weight:800;color:#2A2420;margin-bottom:14px;")}>Change password</div>
+              {pwErr && <div style={css("background:#fdf0ee;border:1px solid #f3d6d2;color:#c0392b;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700;margin-bottom:11px;")}>{pwErr}</div>}
+              <input value={pwOld} onChange={e=>setPwOld(e.target.value)} type="password" placeholder="Current password" style={css("width:100%;border:1.5px solid #e3d9c9;background:#fff;border-radius:14px;padding:14px 15px;font-size:15px;font-weight:600;color:#2A2420;outline:none;margin-bottom:11px;box-sizing:border-box;")} />
+              <input value={pwNew} onChange={e=>setPwNew(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doChangePw();}} type="password" placeholder="New password (min 6 characters)" style={css("width:100%;border:1.5px solid #e3d9c9;background:#fff;border-radius:14px;padding:14px 15px;font-size:15px;font-weight:600;color:#2A2420;outline:none;margin-bottom:14px;box-sizing:border-box;")} />
+              <div style={css("display:flex;gap:10px;")}>
+                <button onClick={()=>setPwOpen(false)} style={css("flex:none;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:16px;padding:14px 18px;font-size:14px;font-weight:800;cursor:pointer;")}>Cancel</button>
+                <button onClick={doChangePw} disabled={pwBusy} style={css(`flex:1;border:none;background:${pwBusy?'#cbb9a9':ACCENT};color:#fff;border-radius:16px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;`)}>{pwBusy?'Please wait…':'Update password'}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===== TOAST ===== */}
+        {toast && (
+          <div style={css("position:absolute;left:50%;bottom:104px;transform:translateX(-50%);z-index:70;background:#2A2420;color:#fff;padding:11px 18px;border-radius:14px;font-size:13.5px;font-weight:800;box-shadow:0 12px 28px -10px rgba(0,0,0,.5);animation:fadeIn .2s ease;white-space:nowrap;")}>{toast}</div>
+        )}
+
+        {/* ===== REPAYMENT MODAL ===== */}
+        {repayFor && (
+          <div style={css("position:absolute;inset:0;z-index:55;")}>
+            <div onClick={()=>setRepayFor(null)} style={css("position:absolute;inset:0;background:rgba(42,36,32,.45);animation:fadeIn .2s ease;")}></div>
+            <div style={css("position:absolute;left:0;right:0;bottom:0;background:#FBF6EF;border-radius:30px 30px 0 0;padding:14px 22px 28px;animation:slideUp .3s cubic-bezier(.2,.9,.3,1);")}>
+              <div style={css("width:42px;height:5px;border-radius:3px;background:#dcd3c5;margin:0 auto 14px;")}></div>
+              <div style={css("font-size:18px;font-weight:800;color:#2A2420;margin-bottom:2px;")}>Record a repayment</div>
+              <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:8px;")}>{repayFor.party} · outstanding principal {compact(outstanding(repayFor))} · interest due {compact(interestDue(repayFor))}</div>
+              <div style={css("background:#fff;border:1px solid #efe7db;border-radius:18px;padding:6px 16px;margin-bottom:14px;")}>
+                <div style={css("display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1ebe1;")}>
+                  <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Principal returned</span>
+                  <div style={css("display:flex;align-items:center;gap:2px;")}><span style={css("font-size:16px;font-weight:800;color:#2A2420;")}>₹</span><input autoFocus value={repayDraft.principal} onChange={e=>setRepayDraft(r=>({...r,principal:e.target.value}))} inputMode="numeric" placeholder="0" style={css("width:120px;text-align:right;border:none;background:none;font-size:16px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                </div>
+                <div style={css("display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1ebe1;")}>
+                  <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Interest paid</span>
+                  <div style={css("display:flex;align-items:center;gap:8px;")}>
+                    {interestDue(repayFor)>0 && <button onClick={()=>setRepayDraft(r=>({...r,interest:String(interestTillToday(repayFor))}))} style={css("border:1px solid #dcebe6;background:#f1f7f5;color:#2A9D8F;border-radius:9px;padding:5px 9px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap;")}>आज तक ₹{compact(interestDue(repayFor))}</button>}
+                    <div style={css("display:flex;align-items:center;gap:2px;")}><span style={css("font-size:16px;font-weight:800;color:#2A2420;")}>₹</span><input value={repayDraft.interest} onChange={e=>setRepayDraft(r=>({...r,interest:e.target.value}))} inputMode="numeric" placeholder="0" style={css("width:84px;text-align:right;border:none;background:none;font-size:16px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                  </div>
+                </div>
+                <div style={css("display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1ebe1;")}>
+                  <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Date</span>
+                  <input type="date" value={repayDraft.date} onChange={e=>setRepayDraft(r=>({...r,date:e.target.value}))} style={css("width:160px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                </div>
+                <div style={css("display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1ebe1;")}>
+                  <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Via</span>
+                  <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
+                    <button onClick={()=>setRepayDraft(r=>({...r,method:'cash'}))} style={css(seg2Style(repayDraft.method==='cash'))}>Cash</button>
+                    <button onClick={()=>setRepayDraft(r=>({...r,method:'bank'}))} style={css(seg2Style(repayDraft.method==='bank'))}>Bank</button>
+                  </div>
+                </div>
+                <div style={css("padding:12px 0;")}>
+                  <input value={repayDraft.note} onChange={e=>setRepayDraft(r=>({...r,note:e.target.value}))} placeholder="Note (optional)…" style={css("width:100%;border:none;background:none;font-size:14px;font-weight:600;color:#2A2420;outline:none;")} />
+                </div>
+              </div>
+              <div style={css("display:flex;gap:10px;")}>
+                <button onClick={()=>setRepayFor(null)} style={css("flex:none;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:16px;padding:14px 18px;font-size:14px;font-weight:800;cursor:pointer;")}>Cancel</button>
+                <button onClick={saveRepay} style={css("flex:1;border:none;background:#2A9D8F;color:#fff;border-radius:16px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;")}>Save repayment</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===== DELETE CONFIRM ===== */}
+        {confirmDelete && (
+          <div style={css("position:absolute;inset:0;z-index:56;display:flex;align-items:center;justify-content:center;padding:30px;")}>
+            <div onClick={()=>setConfirmDelete(null)} style={css("position:absolute;inset:0;background:rgba(42,36,32,.5);animation:fadeIn .2s ease;")}></div>
+            <div style={css("position:relative;background:#FBF6EF;border-radius:24px;padding:22px;width:100%;max-width:300px;box-shadow:0 20px 50px -15px rgba(0,0,0,.5);")}>
+              <div style={css("font-size:17px;font-weight:800;color:#2A2420;margin-bottom:6px;")}>Delete this entry?</div>
+              <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:18px;line-height:1.5;")}>{confirmDelete.party} · {inr(confirmDelete.amount)}. This can't be undone.</div>
+              <div style={css("display:flex;gap:10px;")}>
+                <button onClick={()=>setConfirmDelete(null)} style={css("flex:1;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:14px;padding:12px;font-size:14px;font-weight:800;cursor:pointer;")}>Cancel</button>
+                <button onClick={()=>{ const t=confirmDelete; setConfirmDelete(null); removeTxn(t); }} style={css("flex:1;border:none;background:#E5544B;color:#fff;border-radius:14px;padding:12px;font-size:14px;font-weight:800;cursor:pointer;")}>Delete</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+/* ============================ AUTH ============================ */
+const Shell = ({children}) => (
+  <div style={css("min-height:100vh;width:100%;background:radial-gradient(120% 120% at 50% 0%,#efe7db 0%,#e4dccf 100%);display:flex;align-items:center;justify-content:center;padding:40px 20px;font-family:'Nunito',sans-serif;")}>
+    <div style={css("position:relative;width:390px;height:844px;background:#FBF6EF;border-radius:46px;box-shadow:0 2px 1px rgba(0,0,0,.04),0 30px 60px -20px rgba(60,40,20,.35),0 0 0 11px #1f1b16,0 0 0 12px #3a3229;overflow:hidden;")}>{children}</div>
+  </div>
+);
+const authInput = "width:100%;border:1.5px solid #e3d9c9;background:#fff;border-radius:14px;padding:14px 15px;font-size:15px;font-weight:600;color:#2A2420;outline:none;margin-bottom:11px;box-sizing:border-box;";
+const friendlyAuthErr = (e) => {
+  const m = (e && e.message) || String(e||'');
+  if(/UserNotConfirmed/i.test(m)) return 'Please verify your email first — enter the code we sent.';
+  if(/NotAuthorized|Incorrect username or password/i.test(m)) return 'Wrong email or password.';
+  if(/UserNotFound/i.test(m)) return 'No account with this email.';
+  if(/UsernameExists/i.test(m)) return 'An account with this email already exists — sign in.';
+  if(/CodeMismatch/i.test(m)) return 'That code is incorrect.';
+  if(/ExpiredCode/i.test(m)) return 'That code expired — request a new one.';
+  if(/InvalidParameter|InvalidPassword/i.test(m)) return 'Password must be at least 6 characters.';
+  return m.replace(/^.*Exception:?\s*/,'') || 'Something went wrong.';
+};
+
+function AuthScreens({ onAuthed }){
+  const [mode, setMode] = useState('login');   // login | signup | confirm | forgot | reset
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [info, setInfo] = useState('');
+  const go = (m)=>{ setErr(''); setInfo(''); setMode(m); };
+
+  const doSignup = async ()=>{
+    setErr('');
+    if(!name.trim()) return setErr('Please enter your name.');
+    if(!email.trim()) return setErr('Please enter your email.');
+    if((password||'').length<6) return setErr('Password must be at least 6 characters.');
+    setBusy(true);
+    try{ await Backend.signUp({ email:email.trim(), password, name:name.trim() }); setInfo('We emailed you a 6-digit code.'); setMode('confirm'); }
+    catch(e){ setErr(friendlyAuthErr(e)); }
+    finally{ setBusy(false); }
+  };
+  const doConfirm = async ()=>{
+    setErr(''); setBusy(true);
+    try{ await Backend.confirmSignUp({ email:email.trim(), code:code.trim() });
+      // auto-login after verifying
+      const u = await Backend.signIn({ email:email.trim(), password });
+      onAuthed(u);
+    }catch(e){ setErr(friendlyAuthErr(e)); }
+    finally{ setBusy(false); }
+  };
+  const doLogin = async ()=>{
+    setErr(''); setBusy(true);
+    try{ const u = await Backend.signIn({ email:email.trim(), password }); onAuthed(u); }
+    catch(e){ if(/UserNotConfirmed/i.test(e&&e.message||'')){ try{ await Backend.resendCode({email:email.trim()}); }catch(_){} setInfo('Please verify your email — we sent a new code.'); setMode('confirm'); } else setErr(friendlyAuthErr(e)); }
+    finally{ setBusy(false); }
+  };
+  const doForgot = async ()=>{
+    setErr(''); if(!email.trim()) return setErr('Enter your email first.');
+    setBusy(true);
+    try{ await Backend.forgotPassword({ email:email.trim() }); setInfo('We emailed you a reset code.'); setMode('reset'); }
+    catch(e){ setErr(friendlyAuthErr(e)); }
+    finally{ setBusy(false); }
+  };
+  const doReset = async ()=>{
+    setErr(''); if((password||'').length<6) return setErr('Password must be at least 6 characters.');
+    setBusy(true);
+    try{ await Backend.confirmForgotPassword({ email:email.trim(), code:code.trim(), password }); setInfo('Password changed — sign in now.'); setMode('login'); setCode(''); }
+    catch(e){ setErr(friendlyAuthErr(e)); }
+    finally{ setBusy(false); }
+  };
+  const google = ()=>{ const url = Backend.googleSignInUrl && Backend.googleSignInUrl(); if(url) window.location.href = url; };
+
+  const Title = ({t,s})=>(<div style={css("margin-bottom:20px;")}><div style={css("font-size:27px;font-weight:900;color:#2A2420;letter-spacing:-.6px;")}>{t}</div><div style={css("font-size:14px;font-weight:600;color:#8C8278;margin-top:3px;")}>{s}</div></div>);
+  const Btn = ({onClick,children})=>(<button onClick={onClick} disabled={busy} style={css(`width:100%;border:none;background:${busy?'#cbb9a9':ACCENT};color:#fff;border-radius:14px;padding:15px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 12px 24px -10px ${ACCENT_SHADOW};margin-top:4px;`)}>{busy?'Please wait…':children}</button>);
+  const Msg = ()=>(<>{err&&<div style={css("background:#fdf0ee;border:1px solid #f3d6d2;color:#c0392b;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700;margin-bottom:11px;")}>{err}</div>}{info&&!err&&<div style={css("background:#f1f7f5;border:1px solid #dcebe6;color:#2A9D8F;border-radius:12px;padding:10px 12px;font-size:13px;font-weight:700;margin-bottom:11px;")}>{info}</div>}</>);
+  const Link = ({onClick,children})=>(<span onClick={onClick} style={css("color:#F2784B;font-weight:800;cursor:pointer;")}>{children}</span>);
+
+  return (
+    <Shell>
+      <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:70px 26px 40px;display:flex;flex-direction:column;")}>
+        <div style={css("display:flex;align-items:center;gap:11px;margin-bottom:30px;")}>
+          <div style={css("width:46px;height:46px;border-radius:15px;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:22px;box-shadow:0 8px 18px -6px rgba(229,84,75,.5);")}>₹</div>
+          <div style={css("font-size:21px;font-weight:900;color:#2A2420;letter-spacing:-.4px;")}>Cashflow</div>
+        </div>
+
+        {mode==='login' && (<>
+          <Title t="Welcome back" s="Sign in to your hisab-kitab" />
+          <Msg/>
+          <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email" autoCapitalize="none" style={css(authInput)} />
+          <input value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doLogin();}} type="password" placeholder="Password" style={css(authInput)} />
+          <div style={css("text-align:right;margin:-4px 2px 12px;font-size:13px;")}><Link onClick={()=>go('forgot')}>Forgot password?</Link></div>
+          <Btn onClick={doLogin}>Sign in</Btn>
+          {Backend.googleEnabled && (<>
+            <div style={css("display:flex;align-items:center;gap:10px;margin:18px 0;")}><div style={css("flex:1;height:1px;background:#e3d9c9;")}></div><span style={css("font-size:12px;font-weight:700;color:#a89f93;")}>or</span><div style={css("flex:1;height:1px;background:#e3d9c9;")}></div></div>
+            <button onClick={google} style={css("width:100%;border:1.5px solid #e3d9c9;background:#fff;color:#2A2420;border-radius:14px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;")}>
+              <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.4 29.3 35 24 35c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 5.1 29.5 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.5 5.1 29.5 3 24 3 16 3 9.1 7.6 6.3 14.7z"/><path fill="#4CAF50" d="M24 45c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.9 26.7 37 24 37c-5.3 0-9.7-2.5-11.3-6.9l-6.5 5C9.1 40.4 16 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.3 4.2-4.1 5.6l6.2 5.2C39.9 36.5 45 31 45 24c0-1.2-.1-2.4-.4-3.5z"/></svg>
+              Continue with Google
+            </button>
+          </>)}
+          <div style={css("text-align:center;margin-top:auto;padding-top:24px;font-size:14px;font-weight:600;color:#8C8278;")}>New here? <Link onClick={()=>go('signup')}>Create account</Link></div>
+        </>)}
+
+        {mode==='signup' && (<>
+          <Title t="Create account" s="Just your name, email and a password" />
+          <Msg/>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="Your name" style={css(authInput)} />
+          <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email" autoCapitalize="none" style={css(authInput)} />
+          <input value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doSignup();}} type="password" placeholder="Password (min 6 characters)" style={css(authInput)} />
+          <Btn onClick={doSignup}>Create account</Btn>
+          <div style={css("text-align:center;margin-top:auto;padding-top:24px;font-size:14px;font-weight:600;color:#8C8278;")}>Already have an account? <Link onClick={()=>go('login')}>Sign in</Link></div>
+        </>)}
+
+        {mode==='confirm' && (<>
+          <Title t="Verify your email" s={`Enter the 6-digit code sent to ${email||'your email'}`} />
+          <Msg/>
+          <input value={code} onChange={e=>setCode(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doConfirm();}} inputMode="numeric" placeholder="6-digit code" style={css(authInput)} />
+          <Btn onClick={doConfirm}>Verify & continue</Btn>
+          <div style={css("text-align:center;margin-top:16px;font-size:13px;font-weight:600;color:#8C8278;")}><Link onClick={async()=>{ try{ await Backend.resendCode({email:email.trim()}); setInfo('New code sent.'); setErr(''); }catch(e){ setErr(friendlyAuthErr(e)); } }}>Resend code</Link> · <Link onClick={()=>go('login')}>Back to sign in</Link></div>
+        </>)}
+
+        {mode==='forgot' && (<>
+          <Title t="Reset password" s="We'll email you a reset code" />
+          <Msg/>
+          <input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email" autoCapitalize="none" style={css(authInput)} />
+          <Btn onClick={doForgot}>Send reset code</Btn>
+          <div style={css("text-align:center;margin-top:16px;font-size:13px;font-weight:600;color:#8C8278;")}><Link onClick={()=>go('login')}>Back to sign in</Link></div>
+        </>)}
+
+        {mode==='reset' && (<>
+          <Title t="Choose a new password" s={`Enter the code sent to ${email||'your email'}`} />
+          <Msg/>
+          <input value={code} onChange={e=>setCode(e.target.value)} inputMode="numeric" placeholder="6-digit code" style={css(authInput)} />
+          <input value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doReset();}} type="password" placeholder="New password (min 6)" style={css(authInput)} />
+          <Btn onClick={doReset}>Change password</Btn>
+          <div style={css("text-align:center;margin-top:16px;font-size:13px;font-weight:600;color:#8C8278;")}><Link onClick={()=>go('login')}>Back to sign in</Link></div>
+        </>)}
+      </div>
+    </Shell>
+  );
+}
+
+function Root(){
+  const [booting, setBooting] = useState(true);
+  const [user, setUser] = useState(null);
+  const authOn = !!(Backend && Backend.authConfigured);
+
+  useEffect(()=>{ (async ()=>{
+    try{
+      // Handle the Google/Hosted-UI redirect (?code=...).
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      if(code && Backend.exchangeCode){
+        try{ const u = await Backend.exchangeCode(code); setUser(u); }
+        catch(e){ /* fall through to normal session check */ }
+        // Clean the ?code= from the URL.
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      if(!user && authOn && Backend.currentUser){
+        const u = await Backend.currentUser();
+        if(u) setUser(u);
+      }
+    } finally { setBooting(false); }
+  })(); }, []);
+
+  const signOut = async ()=>{ try{ await Backend.signOut(); }catch(e){} setUser(null); };
+
+  if(booting){
+    return <Shell><div style={css("position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;")}>
+      <div style={css("width:54px;height:54px;border-radius:17px;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:26px;animation:fadeIn .3s ease;")}>₹</div>
+      <div style={css("font-size:13px;font-weight:700;color:#a89f93;")}>Loading…</div>
+    </div></Shell>;
+  }
+  // If Cognito isn't configured, fall back to a guest session so the app still runs.
+  if(!authOn) return <App user={{ sub:undefined, name:'Guest' }} onSignOut={()=>{}} />;
+  if(!user) return <AuthScreens onAuthed={setUser} />;
+  return <App user={user} onSignOut={signOut} />;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Root/>);
+</script>
+</body>
+</html>

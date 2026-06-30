@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+app/node_modules/
+backend/node_modules/
+
+# Generated Capacitor Android project (CI regenerates it each build)
+app/android/
+app/ios/
+
+# Secrets — NEVER commit these
+backend/openai.env
+backend/kimi.env
+*.keystore
+*.jks
+keystore.properties
+
+# Personal ledger data (private financial conversation history)
+chat.txt
+backend/src/chat/context.txt
+
+# Build artifacts
+backend/packaged.yaml
+*.zip
+*.apk
+*.aab
+
+# OS / editor
+.DS_Store
+*.log
+
+# Local Claude session state (may contain transcripts / pasted keys)
+.claude/

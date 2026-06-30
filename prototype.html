@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Cashflow — Money Manager</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;-webkit-font-smoothing:antialiased;}
+  html,body{margin:0;height:100%;font-family:'Nunito',-apple-system,sans-serif;}
+  .scr::-webkit-scrollbar{width:0;height:0;}
+  .scr{scrollbar-width:none;}
+  input,textarea,button{font-family:'Nunito',sans-serif;}
+  @keyframes slideUp{from{transform:translateY(100%);}to{transform:translateY(0);}}
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  @keyframes popIn{0%{transform:scale(.9);opacity:0;}100%{transform:scale(1);opacity:1;}}
+  @keyframes pulseRing{0%{transform:scale(1);opacity:.55;}70%{transform:scale(2.1);opacity:0;}100%{transform:scale(2.1);opacity:0;}}
+  @keyframes mb1{0%,100%{height:10px;}50%{height:30px;}}
+  @keyframes mb2{0%,100%{height:22px;}50%{height:44px;}}
+  @keyframes mb3{0%,100%{height:14px;}50%{height:36px;}}
+  @keyframes mb4{0%,100%{height:26px;}50%{height:12px;}}
+  @keyframes floatUp{from{transform:translateY(8px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  /* Make the phone frame fill small screens (real phones) */
+  @media (max-width:440px){
+    .frameWrap{padding:0 !important;}
+    .phone{width:100vw !important;height:100vh !important;height:100dvh !important;border-radius:0 !important;box-shadow:none !important;}
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ---------- helpers ---------- */
+// Parse a CSS declaration string into a React style object (keeps design fidelity).
+function css(str){
+  const o={};
+  String(str).split(';').forEach(d=>{
+    const i=d.indexOf(':'); if(i<0) return;
+    let k=d.slice(0,i).trim(); let v=d.slice(i+1).trim();
+    if(!k) return;
+    k=k.replace(/-([a-z])/g,(_,c)=>c.toUpperCase());
+    o[k]=v;
+  });
+  return o;
+}
+
+const TODAY = new Date(2026, 5, 20); // demo "today" so seeded data looks alive; swap for new Date() in production
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const STORE_KEY = 'cashflow.txns.v1';
+
+const BASE_PALETTE = {
+  'Ramesh Uncle':'#E5544B','Priya Shah':'#E76F51','Mehta Finance':'#C44536',
+  'Suresh Patel':'#2A9D8F','Anil Verma':'#1F9488','Deepak Rao':'#36A38C',
+  'Greenfield Plot':'#E9A23B',
+};
+
+const SAMPLES = [
+  'Today I took 4 lakh from Ramesh Uncle at 12% for 6 months in cash',
+  'I lent 2 lakh to Deepak Rao at 20% for 9 months by bank transfer',
+  'Took 6 lakh from Mehta Finance at 14% for 2 years for business',
+];
+
+function seed(){
+  return [
+    { id:1, kind:'borrowed', party:'Ramesh Uncle', amount:400000, date:'2026-03-15', rate:12, term:6, method:'cash', purpose:'Business working capital', notes:'Family loan, no paperwork. Pay on time.' },
+    { id:2, kind:'borrowed', party:'Priya Shah', amount:250000, date:'2026-01-10', rate:18, term:12, method:'bank', purpose:'Inventory purchase', notes:'' },
+    { id:3, kind:'borrowed', party:'Mehta Finance', amount:600000, date:'2025-11-01', rate:14, term:24, method:'bank', purpose:'Property down-payment', notes:'NBFC loan, EMI auto-debit from HDFC.' },
+    { id:4, kind:'lent', party:'Suresh Patel', amount:300000, date:'2026-04-01', rate:24, term:6, method:'bank', purpose:'His shop expansion', notes:'Funded from the Ramesh loan.' },
+    { id:5, kind:'lent', party:'Anil Verma', amount:150000, date:'2026-05-05', rate:15, term:3, method:'cash', purpose:'Short-term bridge', notes:'' },
+    { id:6, kind:'lent', party:'Deepak Rao', amount:200000, date:'2026-02-12', rate:20, term:9, method:'bank', purpose:'Truck purchase', notes:'Cousin, reliable.' },
+    { id:7, kind:'asset', party:'Greenfield Plot', amount:500000, date:'2026-02-20', rate:0, term:0, method:'bank', purpose:'Land investment', notes:'Bought from Vijay using Mehta Finance funds. Sector 12.' },
+  ];
+}
+
+function loadTxns(){
+  try{
+    const raw = localStorage.getItem(STORE_KEY);
+    if(raw){ const p = JSON.parse(raw); if(Array.isArray(p)) return p; }
+  }catch(e){}
+  return seed();
+}
+function saveTxns(t){ try{ localStorage.setItem(STORE_KEY, JSON.stringify(t)); }catch(e){} }
+
+const pd = s => { const [y,m,d]=s.split('-').map(Number); return new Date(y,m-1,d); };
+const addMonths = (date,m) => { const d=new Date(date); d.setMonth(d.getMonth()+m); return d; };
+const days = (a,b) => Math.round((b-a)/86400000);
+const initials = name => name.split(' ').map(w=>w[0]).slice(0,2).join('').toUpperCase();
+function inr(n){ n=Math.round(n); const s=Math.abs(n).toString(); let lt=s.slice(-3),ot=s.slice(0,-3); if(ot)lt=','+lt; ot=ot.replace(/\B(?=(\d{2})+(?!\d))/g,','); return (n<0?'-':'')+'₹'+ot+lt; }
+function compact(n){ const a=Math.abs(n); let s; if(a>=10000000)s=(n/10000000).toFixed(2)+' Cr'; else if(a>=100000)s=(n/100000).toFixed(2)+' L'; else if(a>=1000)s=(n/1000).toFixed(0)+'K'; else s=Math.round(n).toString(); return '₹'+s; }
+function fmtDate(d){ return d.getDate()+' '+MON[d.getMonth()]+' '+d.getFullYear(); }
+function accrued(t){ if(t.kind==='asset')return 0; const mat=addMonths(pd(t.date),t.term); const end=TODAY<mat?TODAY:mat; const dd=Math.max(0,days(pd(t.date),end)); return t.amount*t.rate/100*dd/365; }
+function interestFull(t){ if(t.kind==='asset')return 0; return t.amount*t.rate/100*t.term/12; }
+
+const TINT = { '#E5544B':'#FBEAE7','#E76F51':'#FBEAE7','#C44536':'#FBEAE7',
+  '#2A9D8F':'#E4F2EF','#1F9488':'#E4F2EF','#36A38C':'#E4F2EF','#E9A23B':'#FBF1DC' };
+const tintFor = c => TINT[c] || '#f1ece3';
+
+/* ---------- natural-language parser (voice / typed) ---------- */
+function parseText(text){
+  const t=' '+text.toLowerCase()+' ';
+  let kind='borrowed';
+  if(/\b(lent|lend|gave|give|loaned to|loan to)\b/.test(t)) kind='lent';
+  if(/\b(bought|purchase|purchased|property|plot|land|flat|house)\b/.test(t)) kind='asset';
+  else if(/\b(took|take|borrow|borrowed|got)\b/.test(t)) kind='borrowed';
+  let amount='';
+  let m=t.match(/(\d+(?:\.\d+)?)\s*(crore|cr)\b/);
+  if(m) amount=parseFloat(m[1])*10000000;
+  else if((m=t.match(/(\d+(?:\.\d+)?)\s*(lakh|lac|lakhs|l)\b/))) amount=parseFloat(m[1])*100000;
+  else if((m=t.match(/(\d+(?:\.\d+)?)\s*(thousand|k)\b/))) amount=parseFloat(m[1])*1000;
+  else if((m=t.match(/(?:rs\.?|₹|inr)\s*(\d[\d,]*)/))) amount=parseFloat(m[1].replace(/,/g,''));
+  else if((m=t.match(/\b(\d{4,})\b/))) amount=parseFloat(m[1]);
+  let rate=''; m=t.match(/(\d+(?:\.\d+)?)\s*(?:%|percent|per cent)/); if(m)rate=parseFloat(m[1]);
+  let term=''; m=t.match(/(\d+)\s*(?:months?|mo)\b/); if(m)term=parseFloat(m[1]);
+  else if((m=t.match(/(\d+)\s*(?:years?|yrs?|yr)\b/))) term=parseFloat(m[1])*12;
+  let party=''; m=text.match(/\b(?:from|to)\s+([A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*){0,2})/);
+  if(m) party=m[1].replace(/\s+(at|for|in|by|on)$/i,'').trim();
+  let method='cash';
+  if(/\b(bank|transfer|upi|cheque|check|neft|imps|account|online)\b/.test(t)) method='bank';
+  let purpose=''; m=text.match(/\bfor\s+([a-z][a-z\s]+?)(?:\s+(?:at|in|by|for|on)\b|$)/i);
+  if(m && !/\d/.test(m[1])) purpose=m[1].trim().replace(/\s+\d+.*$/,'');
+  const td=TODAY;
+  const ds=td.getFullYear()+'-'+String(td.getMonth()+1).padStart(2,'0')+'-'+String(td.getDate()).padStart(2,'0');
+  return { kind, amount:amount||'', party:party||'', rate:rate===''?'':rate, term:term===''?'':term,
+    method, date:ds, purpose:purpose?(purpose[0].toUpperCase()+purpose.slice(1)):'', notes:'' };
+}
+
+/* ---------- shared style builders ---------- */
+const chipStyle = (active) => `border-radius:20px;padding:8px 15px;font-size:13px;font-weight:800;cursor:pointer;background:${active?'#2A2420':'#fff'};color:${active?'#fff':'#8C8278'};border:1px solid ${active?'#2A2420':'#ece4d8'};`;
+const segStyle = (active,accent) => `flex:1;border-radius:13px;padding:11px 0;font-size:13px;font-weight:800;cursor:pointer;background:${active?accent:'#fff'};color:${active?'#fff':'#8C8278'};border:1.5px solid ${active?accent:'#ece4d8'};`;
+const seg2Style = (active) => `border:none;border-radius:9px;padding:7px 16px;font-size:13px;font-weight:800;cursor:pointer;background:${active?'#fff':'transparent'};color:${active?'#2A2420':'#a89f93'};box-shadow:${active?'0 1px 4px rgba(0,0,0,.12)':'none'};`;
+
+const ACCENT = '#F2784B';
+const ACCENT_SHADOW = 'rgba(242,120,75,.55)';
+
+/* ============================================================= */
+function App(){
+  const [txns, setTxns] = useState(loadTxns);
+  const [screen, setScreen] = useState('home');
+  const [back, setBack] = useState('people');
+  const [detailParty, setDetailParty] = useState(null);
+  const [filter, setFilter] = useState('all');
+  const [heroStyle, setHeroStyle] = useState('ring');
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addStep, setAddStep] = useState('capture');
+  const [typed, setTyped] = useState('');
+  const [transcript, setTranscript] = useState('');
+  const [draft, setDraft] = useState(null);
+  const [listenError, setListenError] = useState('');
+  const micIdx = useRef(0);
+  const recogRef = useRef(null);
+  const simTimers = useRef([]);
+  const paletteRef = useRef({ ...BASE_PALETTE });
+
+  useEffect(()=>{ saveTxns(txns); }, [txns]);
+
+  const pColor = useCallback((p)=> paletteRef.current[p] || '#7c6f5f', []);
+
+  const clearSim = () => { simTimers.current.forEach(clearTimeout); simTimers.current=[]; };
+  useEffect(()=>()=>{ clearSim(); if(recogRef.current) try{recogRef.current.stop();}catch(e){} }, []);
+
+  const openParty = (p) => { setBack(screen); setDetailParty(p); setScreen('detail'); };
+  const setDraftField = (k,v) => setDraft(d => ({...d, [k]:v}));
+
+  const openAdd = () => { setAddOpen(true); setAddStep('capture'); setTyped(''); setTranscript(''); setDraft(null); setListenError(''); };
+  const closeAdd = () => { clearSim(); if(recogRef.current) try{recogRef.current.stop();}catch(e){} setAddOpen(false); };
+
+  // Simulated fallback (no SpeechRecognition support): "types out" a sample sentence.
+  const simulateListen = () => {
+    const sample = SAMPLES[micIdx.current % SAMPLES.length];
+    micIdx.current++;
+    setAddStep('listen'); setTranscript('');
+    const words = sample.split(' ');
+    let i=0;
+    const step = () => {
+      i++; setTranscript(words.slice(0,i).join(' '));
+      if(i<words.length){ simTimers.current.push(setTimeout(step,85)); }
+      else { simTimers.current.push(setTimeout(()=>{ setDraft(parseText(sample)); setAddStep('preview'); }, 650)); }
+    };
+    simTimers.current.push(setTimeout(step,85));
+  };
+
+  // Real voice via Web Speech API, with graceful fallback.
+  const startListen = () => {
+    setListenError('');
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SR){ simulateListen(); return; }
+    let rec;
+    try{ rec = new SR(); }catch(e){ simulateListen(); return; }
+    recogRef.current = rec;
+    rec.lang = 'en-IN';
+    rec.interimResults = true;
+    rec.continuous = false;
+    let finalText = '';
+    setAddStep('listen'); setTranscript('');
+    rec.onresult = (ev) => {
+      let interim = '';
+      for(let i=ev.resultIndex; i<ev.results.length; i++){
+        const r = ev.results[i];
+        if(r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      setTranscript((finalText + ' ' + interim).trim());
+    };
+    rec.onerror = (ev) => {
+      recogRef.current = null;
+      if(ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
+        setListenError('Microphone blocked — showing a demo instead.');
+        simulateListen();
+      } else if(ev.error === 'no-speech'){
+        setListenError("Didn't catch that. Tap the mic to try again.");
+        setAddStep('capture');
+      } else {
+        simulateListen();
+      }
+    };
+    rec.onend = () => {
+      recogRef.current = null;
+      const text = finalText.trim() || (typeof transcript==='string'?transcript.trim():'');
+      if(text){ setTranscript(text); setDraft(parseText(text)); setAddStep('preview'); }
+    };
+    try{ rec.start(); }
+    catch(e){ recogRef.current=null; simulateListen(); }
+  };
+
+  const parseTyped = () => {
+    const t = typed.trim(); if(!t) return;
+    setTranscript(t); setDraft(parseText(t)); setAddStep('preview');
+  };
+
+  const confirmAdd = () => {
+    const d = draft;
+    const t = { id:Date.now(), kind:d.kind, party:(d.party||'Unknown').trim(),
+      amount:parseFloat(d.amount)||0, date:d.date, rate:parseFloat(d.rate)||0,
+      term:parseFloat(d.term)||0, method:d.method, purpose:d.purpose||'', notes:d.notes||'' };
+    if(!paletteRef.current[t.party])
+      paletteRef.current[t.party] = t.kind==='lent'?'#2A9D8F':t.kind==='asset'?'#E9A23B':'#E5544B';
+    setTxns(prev => [t, ...prev]);
+    setAddOpen(false); setScreen('activity'); setFilter('all');
+  };
+
+  /* ---------- derived view model ---------- */
+  let receivable=0,payable=0,monthlyIn=0,monthlyOut=0,assetsTotal=0;
+  txns.forEach(t=>{
+    const acc=accrued(t);
+    if(t.kind==='lent'){ receivable+=t.amount+acc; monthlyIn+=t.amount*t.rate/100/12; }
+    else if(t.kind==='borrowed'){ payable+=t.amount+acc; monthlyOut+=t.amount*t.rate/100/12; }
+    else assetsTotal+=t.amount;
+  });
+  const net=receivable-payable;
+  const C=2*Math.PI*54, tot=receivable+payable||1;
+  const gLen=C*(receivable/tot), rLen=C*(payable/tot);
+  const netCompact=compact(net);
+
+  const upcoming = txns.filter(t=>t.kind!=='asset').map(t=>{
+    const mat=addMonths(pd(t.date),t.term);
+    const dl=days(TODAY,mat);
+    const due=t.amount+interestFull(t);
+    const pay=t.kind==='borrowed';
+    return { id:t.id, mat, party:t.party,
+      sub:(pay?'You pay · ':'You receive · ')+compact(interestFull(t))+' interest',
+      amount:compact(due), color:pay?'#E5544B':'#2A9D8F', tint:pay?'#FBEAE7':'#E4F2EF',
+      day:mat.getDate(), mon:MON[mat.getMonth()],
+      daysLeft: dl<0?Math.abs(dl)+'d ago':(dl===0?'today':'in '+dl+'d') };
+  }).sort((a,b)=>a.mat-b.mat).slice(0,5);
+
+  // graph
+  const order=['Ramesh Uncle','Mehta Finance','Priya Shah','Greenfield Plot','Suresh Patel','Deepak Rao','Anil Verma'];
+  const extra=[...new Set(txns.map(t=>t.party))].filter(p=>!order.includes(p));
+  const present=[...order,...extra].filter(p=>txns.some(t=>t.party===p));
+  const cx=175,cy=190,R=140, gn=present.length||1;
+  const nodes=[],edges=[];
+  present.forEach((p,i)=>{
+    const ang=(-90 + i*(360/gn))*Math.PI/180;
+    const x=cx+R*Math.cos(ang), y=cy+R*Math.sin(ang);
+    const pt=txns.filter(t=>t.party===p);
+    const col=pColor(p);
+    const sum=pt.reduce((s,t)=>s+t.amount,0);
+    nodes.push({ name:p, initials:initials(p), color:col, amount:compact(sum), x, y });
+    edges.push({ x, y, color:col, w:Math.max(2,Math.min(7,sum/100000)) });
+  });
+
+  const grp=(kind)=>{
+    const names=[...new Set(txns.filter(t=>t.kind===kind).map(t=>t.party))];
+    return names.map(p=>{
+      const pt=txns.filter(t=>t.party===p);
+      const principal=pt.reduce((s,t)=>s+t.amount,0);
+      const acc=pt.reduce((s,t)=>s+accrued(t),0);
+      const col=pColor(p);
+      const rates=[...new Set(pt.map(t=>t.rate))];
+      return { name:p, initials:initials(p), color:col, tint:tintFor(col),
+        sub:pt.length+(pt.length>1?' loans · ':' loan · ')+pt[0].purpose,
+        amount:compact(principal+acc), rate:rates.join('/')+'% p.a.' };
+    });
+  };
+  const assetList=txns.filter(t=>t.kind==='asset').map(t=>({
+    name:t.party, initials:initials(t.party), sub:t.purpose+' · '+fmtDate(pd(t.date)),
+    amount:compact(t.amount) }));
+
+  const KMAP={borrowed:'#E5544B',lent:'#2A9D8F',asset:'#E9A23B'};
+  const KLBL={borrowed:'Borrowed from',lent:'Lent to',asset:'Bought'};
+  let activity=[...txns].sort((a,b)=>pd(b.date)-pd(a.date));
+  if(filter!=='all') activity=activity.filter(t=>t.kind===filter);
+  activity=activity.map(t=>({
+    party:t.party, initials:initials(t.party), color:KMAP[t.kind], tint:tintFor(pColor(t.party)),
+    title:KLBL[t.kind]+' '+t.party, date:fmtDate(pd(t.date)),
+    method:t.method==='cash'?'Cash':'Bank',
+    signed:(t.kind==='lent'?'+':t.kind==='borrowed'?'−':'')+compact(t.amount),
+    rate:t.kind==='asset'?'asset':t.rate+'%' }));
+
+  let detail=null;
+  if(detailParty){
+    const p=detailParty, pt=txns.filter(t=>t.party===p);
+    if(pt.length){
+      const kind=pt[0].kind, col=pColor(p);
+      const principal=pt.reduce((s,t)=>s+t.amount,0);
+      const acc=pt.reduce((s,t)=>s+accrued(t),0);
+      const full=pt.reduce((s,t)=>s+interestFull(t),0);
+      const rel=kind==='borrowed'?'You borrowed from them':kind==='lent'?'You lent to them':'Asset you own';
+      const netLabel=kind==='borrowed'?'You owe (with accrued)':kind==='lent'?'They owe you (with accrued)':'Asset value';
+      const KLBL2={borrowed:'Borrowed',lent:'Lent',asset:'Asset'};
+      detail={ name:p, initials:initials(p), color:col, tint:tintFor(col), relation:rel, netLabel,
+        net:inr(principal+acc), accrued:compact(acc), totalDue:compact(principal+full),
+        txns: pt.map(t=>({
+          amount:inr(t.amount), kind:KLBL2[t.kind], color:KMAP[t.kind], tint:tintFor(pColor(p)),
+          rate:t.kind==='asset'?'—':t.rate+'% p.a.', term:t.kind==='asset'?'—':t.term+' months',
+          start:fmtDate(pd(t.date)),
+          matures:t.kind==='asset'?'—':fmtDate(addMonths(pd(t.date),t.term)),
+          method:t.method==='cash'?'Cash':'Bank transfer',
+          hasPurpose:!!t.purpose, purpose:t.purpose, hasNotes:!!t.notes, notes:t.notes })) };
+    }
+  }
+
+  const d=draft;
+  let kindOpts=[],partyLabel='Person',draftInterest='₹0';
+  if(d){
+    const ko=[['borrowed','Borrowed'],['lent','Lent'],['asset','Asset']];
+    kindOpts=ko.map(([v,l])=>({ value:v, label:l }));
+    partyLabel=d.kind==='borrowed'?'From':d.kind==='lent'?'To':'Asset name';
+    const amt=parseFloat(d.amount)||0, rt=parseFloat(d.rate)||0, tm=parseFloat(d.term)||0;
+    draftInterest=inr(amt*rt/100*tm/12);
+  }
+  const navc=(s)=> screen===s?ACCENT:'#b9afa1';
+  const draftV = d || {amount:'',party:'',rate:'',term:'',date:'',purpose:'',notes:'',kind:'borrowed',method:'cash'};
+
+  /* ---------- render ---------- */
+  return (
+    <div className="frameWrap" style={css("min-height:100vh;width:100%;background:radial-gradient(120% 120% at 50% 0%,#efe7db 0%,#e4dccf 100%);display:flex;align-items:center;justify-content:center;padding:40px 20px;font-family:'Nunito',sans-serif;")}>
+      <div className="phone" style={css("position:relative;width:390px;height:844px;background:#FBF6EF;border-radius:46px;box-shadow:0 2px 1px rgba(0,0,0,.04),0 30px 60px -20px rgba(60,40,20,.35),0 0 0 11px #1f1b16,0 0 0 12px #3a3229;overflow:hidden;")}>
+
+        {/* status bar */}
+        <div style={css("position:absolute;top:0;left:0;right:0;height:50px;z-index:40;display:flex;align-items:flex-end;justify-content:space-between;padding:0 30px 8px;pointer-events:none;")}>
+          <span style={css("font-size:14px;font-weight:800;color:#2A2420;")}>9:41</span>
+          <div style={css("position:absolute;left:50%;top:9px;transform:translateX(-50%);width:108px;height:30px;background:#1f1b16;border-radius:16px;")}></div>
+          <div style={css("display:flex;gap:5px;align-items:center;")}>
+            <div style={css("display:flex;gap:2px;align-items:flex-end;height:11px;")}>
+              <span style={css("width:3px;height:5px;background:#2A2420;border-radius:1px;")}></span>
+              <span style={css("width:3px;height:7px;background:#2A2420;border-radius:1px;")}></span>
+              <span style={css("width:3px;height:9px;background:#2A2420;border-radius:1px;")}></span>
+              <span style={css("width:3px;height:11px;background:#2A2420;border-radius:1px;")}></span>
+            </div>
+            <div style={css("width:22px;height:11px;border:1.5px solid #2A2420;border-radius:3px;padding:1.5px;")}>
+              <div style={css("width:80%;height:100%;background:#2A2420;border-radius:1px;")}></div>
+            </div>
+          </div>
+        </div>
+
+        {/* ===== HOME ===== */}
+        {screen==='home' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;")}>
+              <div>
+                <div style={css("font-size:14px;color:#8C8278;font-weight:600;")}>Good evening,</div>
+                <div style={css("font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>Arjun Mehta</div>
+              </div>
+              <div onClick={()=>setHeroStyle(h=>h==='ring'?'bars':'ring')} title="Toggle hero style" style={css("width:46px;height:46px;border-radius:50%;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px;box-shadow:0 6px 14px -4px rgba(229,84,75,.5);cursor:pointer;")}>AM</div>
+            </div>
+
+            {heroStyle==='ring' ? (
+              <div style={css("background:#2A2420;border-radius:28px;padding:24px 22px;color:#fff;box-shadow:0 18px 36px -16px rgba(42,36,32,.6);margin-bottom:14px;")}>
+                <div style={css("display:flex;align-items:center;gap:20px;")}>
+                  <div style={css("position:relative;width:128px;height:128px;flex:none;")}>
+                    <svg width="128" height="128" viewBox="0 0 128 128" style={css("transform:rotate(-90deg);")}>
+                      <circle cx="64" cy="64" r="54" fill="none" stroke="#3a342d" strokeWidth="15"></circle>
+                      <circle cx="64" cy="64" r="54" fill="none" stroke="#2A9D8F" strokeWidth="15" strokeLinecap="round" strokeDasharray={`${gLen} ${C}`}></circle>
+                      <circle cx="64" cy="64" r="54" fill="none" stroke="#E5544B" strokeWidth="15" strokeLinecap="round" strokeDasharray={`${rLen} ${C}`} strokeDashoffset={`${-gLen}`}></circle>
+                    </svg>
+                    <div style={css("position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;")}>
+                      <span style={css("font-size:10px;color:#a9a298;font-weight:700;text-transform:uppercase;letter-spacing:.5px;")}>Net</span>
+                      <span style={css("font-size:20px;font-weight:800;letter-spacing:-.5px;")}>{netCompact}</span>
+                    </div>
+                  </div>
+                  <div style={css("flex:1;display:flex;flex-direction:column;gap:14px;")}>
+                    <div>
+                      <div style={css("display:flex;align-items:center;gap:7px;")}><span style={css("width:9px;height:9px;border-radius:50%;background:#2A9D8F;")}></span><span style={css("font-size:12px;color:#a9a298;font-weight:700;")}>Owed to you</span></div>
+                      <div style={css("font-size:18px;font-weight:800;letter-spacing:-.3px;margin-top:2px;")}>{inr(receivable)}</div>
+                    </div>
+                    <div>
+                      <div style={css("display:flex;align-items:center;gap:7px;")}><span style={css("width:9px;height:9px;border-radius:50%;background:#E5544B;")}></span><span style={css("font-size:12px;color:#a9a298;font-weight:700;")}>You owe</span></div>
+                      <div style={css("font-size:18px;font-weight:800;letter-spacing:-.3px;margin-top:2px;")}>{inr(payable)}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={css("background:#2A2420;border-radius:28px;padding:22px;color:#fff;box-shadow:0 18px 36px -16px rgba(42,36,32,.6);margin-bottom:14px;")}>
+                <div style={css("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:18px;")}>
+                  <span style={css("font-size:12px;color:#a9a298;font-weight:700;text-transform:uppercase;letter-spacing:.6px;")}>Net position</span>
+                  <span style={css("font-size:28px;font-weight:900;letter-spacing:-.6px;")}>{netCompact}</span>
+                </div>
+                <div style={css("margin-bottom:14px;")}>
+                  <div style={css("display:flex;justify-content:space-between;margin-bottom:6px;")}><span style={css("font-size:12px;color:#cfc8bd;font-weight:700;")}>Owed to you</span><span style={css("font-size:13px;font-weight:800;")}>{inr(receivable)}</span></div>
+                  <div style={css("height:12px;background:#3a342d;border-radius:8px;overflow:hidden;")}><div style={css(`height:100%;background:#2A9D8F;border-radius:8px;width:${Math.round(receivable/tot*100)}%;`)}></div></div>
+                </div>
+                <div>
+                  <div style={css("display:flex;justify-content:space-between;margin-bottom:6px;")}><span style={css("font-size:12px;color:#cfc8bd;font-weight:700;")}>You owe</span><span style={css("font-size:13px;font-weight:800;")}>{inr(payable)}</span></div>
+                  <div style={css("height:12px;background:#3a342d;border-radius:8px;overflow:hidden;")}><div style={css(`height:100%;background:#E5544B;border-radius:8px;width:${Math.round(payable/tot*100)}%;`)}></div></div>
+                </div>
+              </div>
+            )}
+
+            <div style={css("display:flex;gap:10px;margin-bottom:24px;")}>
+              <div style={css("flex:1;background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;")}>
+                <div style={css("font-size:11px;color:#8C8278;font-weight:700;margin-bottom:4px;")}>Interest in / mo</div>
+                <div style={css("font-size:17px;font-weight:800;color:#2A9D8F;")}>{compact(monthlyIn)}</div>
+              </div>
+              <div style={css("flex:1;background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;")}>
+                <div style={css("font-size:11px;color:#8C8278;font-weight:700;margin-bottom:4px;")}>Interest out / mo</div>
+                <div style={css("font-size:17px;font-weight:800;color:#E5544B;")}>{compact(monthlyOut)}</div>
+              </div>
+              <div style={css("flex:1;background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;")}>
+                <div style={css("font-size:11px;color:#8C8278;font-weight:700;margin-bottom:4px;")}>Assets</div>
+                <div style={css("font-size:17px;font-weight:800;color:#E9A23B;")}>{compact(assetsTotal)}</div>
+              </div>
+            </div>
+
+            <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;")}>
+              <span style={css("font-size:17px;font-weight:800;color:#2A2420;")}>Upcoming</span>
+              <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>{txns.filter(t=>t.kind!=='asset').length} due</span>
+            </div>
+            <div style={css("display:flex;flex-direction:column;gap:10px;")}>
+              {upcoming.map(u=>(
+                <div key={u.id} onClick={()=>openParty(u.party)} style={css("background:#fff;border-radius:18px;padding:14px;border:1px solid #efe7db;display:flex;align-items:center;gap:13px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:14px;flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${u.tint};`)}>
+                    <span style={css(`font-size:16px;font-weight:900;color:${u.color};line-height:1;`)}>{u.day}</span>
+                    <span style={css(`font-size:9px;font-weight:800;color:${u.color};text-transform:uppercase;`)}>{u.mon}</span>
+                  </div>
+                  <div style={css("flex:1;min-width:0;")}>
+                    <div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{u.party}</div>
+                    <div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{u.sub}</div>
+                  </div>
+                  <div style={css("text-align:right;")}>
+                    <div style={css(`font-size:15px;font-weight:800;color:${u.color};`)}>{u.amount}</div>
+                    <div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{u.daysLeft}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== GRAPH ===== */}
+        {screen==='graph' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("margin-bottom:6px;font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>Money Map</div>
+            <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:8px;")}>Tap any node to see the relationship</div>
+            <div style={css("position:relative;width:350px;height:380px;margin:0 auto;")}>
+              <svg width="350" height="380" style={css("position:absolute;inset:0;overflow:visible;")}>
+                {edges.map((e,i)=>(
+                  <line key={i} x1="175" y1="190" x2={e.x} y2={e.y} stroke={e.color} strokeWidth={e.w} strokeLinecap="round" opacity="0.45"></line>
+                ))}
+              </svg>
+              <div style={css("position:absolute;left:175px;top:190px;transform:translate(-50%,-50%);width:78px;height:78px;border-radius:50%;background:#2A2420;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 24px -8px rgba(42,36,32,.6);z-index:5;")}>
+                <span style={css("font-size:18px;font-weight:900;")}>You</span>
+                <span style={css("font-size:9px;font-weight:700;color:#a9a298;")}>{netCompact}</span>
+              </div>
+              {nodes.map((n,i)=>(
+                <div key={i} onClick={()=>openParty(n.name)} style={css(`position:absolute;left:${n.x}px;top:${n.y}px;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:pointer;z-index:6;`)}>
+                  <div style={css(`width:54px;height:54px;border-radius:50%;background:#fff;border:3px solid ${n.color};display:flex;align-items:center;justify-content:center;color:${n.color};font-weight:800;font-size:15px;box-shadow:0 6px 14px -6px rgba(60,40,20,.4);`)}>{n.initials}</div>
+                  <div style={css("font-size:11px;font-weight:800;color:#2A2420;margin-top:5px;text-align:center;max-width:78px;line-height:1.15;white-space:nowrap;")}>{n.name}</div>
+                  <div style={css(`font-size:10px;font-weight:800;color:${n.color};margin-top:2px;`)}>{n.amount}</div>
+                </div>
+              ))}
+            </div>
+            <div style={css("display:flex;justify-content:center;gap:18px;margin-top:8px;flex-wrap:wrap;")}>
+              <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#E5544B;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>You borrowed</span></div>
+              <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#2A9D8F;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>You lent</span></div>
+              <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#E9A23B;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>Asset</span></div>
+            </div>
+          </div>
+        )}
+
+        {/* ===== PEOPLE ===== */}
+        {screen==='people' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("margin-bottom:18px;font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>People &amp; Assets</div>
+            <div style={css("font-size:13px;font-weight:800;color:#E5544B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;")}>You owe</div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;margin-bottom:24px;")}>
+              {grp('borrowed').map((p,i)=>(
+                <div key={i} onClick={()=>openParty(p.name)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:50%;flex:none;background:${p.tint};display:flex;align-items:center;justify-content:center;color:${p.color};font-weight:800;font-size:15px;`)}>{p.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}><div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{p.name}</div><div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{p.sub}</div></div>
+                  <div style={css("text-align:right;")}><div style={css("font-size:15px;font-weight:800;color:#E5544B;")}>{p.amount}</div><div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{p.rate}</div></div>
+                </div>
+              ))}
+            </div>
+            <div style={css("font-size:13px;font-weight:800;color:#2A9D8F;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;")}>Owes you</div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;margin-bottom:24px;")}>
+              {grp('lent').map((p,i)=>(
+                <div key={i} onClick={()=>openParty(p.name)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:50%;flex:none;background:${p.tint};display:flex;align-items:center;justify-content:center;color:${p.color};font-weight:800;font-size:15px;`)}>{p.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}><div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{p.name}</div><div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{p.sub}</div></div>
+                  <div style={css("text-align:right;")}><div style={css("font-size:15px;font-weight:800;color:#2A9D8F;")}>{p.amount}</div><div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{p.rate}</div></div>
+                </div>
+              ))}
+            </div>
+            <div style={css("font-size:13px;font-weight:800;color:#E9A23B;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;")}>Assets</div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;")}>
+              {assetList.map((p,i)=>(
+                <div key={i} onClick={()=>openParty(p.name)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css("width:44px;height:44px;border-radius:14px;flex:none;background:#FBF1DC;display:flex;align-items:center;justify-content:center;color:#E9A23B;font-weight:800;font-size:15px;")}>{p.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}><div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{p.name}</div><div style={css("font-size:12px;font-weight:600;color:#8C8278;")}>{p.sub}</div></div>
+                  <div style={css("text-align:right;")}><div style={css("font-size:15px;font-weight:800;color:#E9A23B;")}>{p.amount}</div></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== ACTIVITY ===== */}
+        {screen==='activity' && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
+            <div style={css("margin-bottom:14px;font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>Activity</div>
+            <div style={css("display:flex;gap:8px;margin-bottom:16px;")}>
+              {[['all','All'],['borrowed','Borrowed'],['lent','Lent'],['asset','Assets']].map(([v,l])=>(
+                <button key={v} onClick={()=>setFilter(v)} style={css(chipStyle(filter===v))}>{l}</button>
+              ))}
+            </div>
+            <div style={css("display:flex;flex-direction:column;gap:9px;")}>
+              {activity.map((t,i)=>(
+                <div key={i} onClick={()=>openParty(t.party)} style={css("background:#fff;border-radius:18px;padding:13px 14px;border:1px solid #efe7db;display:flex;align-items:center;gap:12px;cursor:pointer;")}>
+                  <div style={css(`width:44px;height:44px;border-radius:50%;flex:none;background:${t.tint};display:flex;align-items:center;justify-content:center;color:${t.color};font-weight:800;font-size:15px;`)}>{t.initials}</div>
+                  <div style={css("flex:1;min-width:0;")}>
+                    <div style={css("font-size:15px;font-weight:800;color:#2A2420;")}>{t.title}</div>
+                    <div style={css("display:flex;align-items:center;gap:6px;margin-top:2px;")}>
+                      <span style={css("font-size:11px;font-weight:700;color:#8C8278;")}>{t.date}</span>
+                      <span style={css("font-size:10px;font-weight:800;color:#a89f93;padding:1px 7px;border-radius:20px;background:#f3ede3;")}>{t.method}</span>
+                    </div>
+                  </div>
+                  <div style={css("text-align:right;")}><div style={css(`font-size:15px;font-weight:800;color:${t.color};`)}>{t.signed}</div><div style={css("font-size:11px;font-weight:700;color:#a89f93;")}>{t.rate}</div></div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== DETAIL ===== */}
+        {screen==='detail' && detail && (
+          <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:54px 20px 40px;background:#FBF6EF;z-index:30;animation:fadeIn .2s ease;")}>
+            <button onClick={()=>{ setScreen(back||'people'); setDetailParty(null); }} style={css("background:#fff;border:1px solid #efe7db;width:40px;height:40px;border-radius:50%;font-size:18px;font-weight:800;color:#2A2420;cursor:pointer;margin-bottom:16px;")}>‹</button>
+            <div style={css("display:flex;align-items:center;gap:14px;margin-bottom:20px;")}>
+              <div style={css(`width:60px;height:60px;border-radius:50%;flex:none;background:${detail.tint};display:flex;align-items:center;justify-content:center;color:${detail.color};font-weight:800;font-size:20px;`)}>{detail.initials}</div>
+              <div>
+                <div style={css("font-size:22px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>{detail.name}</div>
+                <div style={css(`font-size:13px;font-weight:700;color:${detail.color};`)}>{detail.relation}</div>
+              </div>
+            </div>
+            <div style={css(`background:${detail.color};border-radius:24px;padding:20px;color:#fff;margin-bottom:18px;box-shadow:0 14px 28px -14px rgba(0,0,0,.4);`)}>
+              <div style={css("font-size:12px;font-weight:700;opacity:.85;")}>{detail.netLabel}</div>
+              <div style={css("font-size:30px;font-weight:900;letter-spacing:-.6px;margin:2px 0 14px;")}>{detail.net}</div>
+              <div style={css("display:flex;gap:10px;")}>
+                <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Interest accrued</div><div style={css("font-size:16px;font-weight:800;")}>{detail.accrued}</div></div>
+                <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Due at maturity</div><div style={css("font-size:16px;font-weight:800;")}>{detail.totalDue}</div></div>
+              </div>
+            </div>
+            <div style={css("font-size:14px;font-weight:800;color:#2A2420;margin-bottom:10px;")}>Transactions</div>
+            <div style={css("display:flex;flex-direction:column;gap:10px;")}>
+              {detail.txns.map((t,i)=>(
+                <div key={i} style={css("background:#fff;border-radius:18px;padding:15px;border:1px solid #efe7db;")}>
+                  <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;")}>
+                    <span style={css("font-size:16px;font-weight:800;color:#2A2420;")}>{t.amount}</span>
+                    <span style={css(`font-size:11px;font-weight:800;color:${t.color};padding:3px 10px;border-radius:20px;background:${t.tint};`)}>{t.kind}</span>
+                  </div>
+                  <div style={css("display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:10px;")}>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Rate</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.rate}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Term</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.term}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Started</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.start}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Matures</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.matures}</div></div>
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Via</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.method}</div></div>
+                  </div>
+                  {t.hasPurpose && <div style={css("font-size:13px;font-weight:600;color:#6f665c;background:#f7f1e7;border-radius:12px;padding:9px 11px;")}>{t.purpose}</div>}
+                  {t.hasNotes && <div style={css("font-size:12px;font-weight:600;color:#8C8278;margin-top:8px;font-style:italic;")}>“{t.notes}”</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ===== BOTTOM NAV + FAB ===== */}
+        {screen!=='detail' && (
+          <>
+            <div style={css("position:absolute;bottom:0;left:0;right:0;height:88px;background:rgba(251,246,239,.92);backdrop-filter:blur(14px);border-top:1px solid #ece4d8;display:flex;align-items:flex-start;justify-content:space-around;padding:12px 14px 0;z-index:35;")}>
+              <button onClick={()=>setScreen('home')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:60px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('home')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('home')};`)}>Home</span>
+              </button>
+              <button onClick={()=>setScreen('graph')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:60px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('graph')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><circle cx="12" cy="12" r="3"></circle><circle cx="5" cy="5" r="2.2"></circle><circle cx="19" cy="6" r="2.2"></circle><circle cx="18" cy="19" r="2.2"></circle><path d="M10 10 6.5 6.5M14 10.5 17 8M14 14l3 3.5"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('graph')};`)}>Map</span>
+              </button>
+              <button onClick={()=>setScreen('people')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:60px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('people')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 20a5.5 5.5 0 0 1 11 0"></path><path d="M16 5.5a3 3 0 0 1 0 5.6M17 20a5.5 5.5 0 0 0-2.5-4.6"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('people')};`)}>People</span>
+              </button>
+              <button onClick={()=>setScreen('activity')} style={css("border:none;background:none;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;width:60px;")}>
+                <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={navc('activity')} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+                <span style={css(`font-size:10px;font-weight:800;color:${navc('activity')};`)}>Activity</span>
+              </button>
+            </div>
+            <button onClick={openAdd} style={css(`position:absolute;right:20px;bottom:104px;width:60px;height:60px;border-radius:22px;border:none;background:${ACCENT};box-shadow:0 12px 26px -8px ${ACCENT_SHADOW};display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:36;`)}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+            </button>
+          </>
+        )}
+
+        {/* ===== ADD SHEET ===== */}
+        {addOpen && (
+          <div style={css("position:absolute;inset:0;z-index:50;")}>
+            <div onClick={closeAdd} style={css("position:absolute;inset:0;background:rgba(42,36,32,.45);animation:fadeIn .2s ease;")}></div>
+            <div className="scr" style={css("position:absolute;left:0;right:0;bottom:0;max-height:90%;overflow-y:auto;background:#FBF6EF;border-radius:30px 30px 0 0;padding:12px 22px 30px;animation:slideUp .32s cubic-bezier(.2,.9,.3,1);")}>
+              <div style={css("width:42px;height:5px;border-radius:3px;background:#dcd3c5;margin:0 auto 14px;")}></div>
+
+              {addStep==='capture' && (
+                <div style={css("text-align:center;")}>
+                  <div style={css("font-size:20px;font-weight:800;color:#2A2420;margin-bottom:4px;")}>Add a transaction</div>
+                  <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:26px;")}>Just say it out loud — I'll fill in the rest</div>
+                  <div style={css("position:relative;width:104px;height:104px;margin:0 auto 18px;")}>
+                    <span style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};opacity:.25;`)}></span>
+                    <button onClick={startListen} style={css(`position:absolute;inset:0;border:none;border-radius:50%;background:${ACCENT};box-shadow:0 14px 30px -8px ${ACCENT_SHADOW};display:flex;align-items:center;justify-content:center;cursor:pointer;`)}>
+                      <svg width="38" height="38" viewBox="0 0 24 24" fill="#fff"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M6 11a6 6 0 0 0 12 0" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"></path><path d="M12 17v3" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round"></path></svg>
+                    </button>
+                  </div>
+                  <div style={css("font-size:13px;font-weight:700;color:#a89f93;margin-bottom:22px;")}>Tap the mic to speak</div>
+                  {listenError && <div style={css("font-size:12px;font-weight:700;color:#E5544B;margin-bottom:16px;")}>{listenError}</div>}
+                  <div style={css("display:flex;align-items:center;gap:10px;margin-bottom:14px;")}><span style={css("flex:1;height:1px;background:#e7ddcf;")}></span><span style={css("font-size:11px;font-weight:700;color:#b3a999;")}>OR TYPE IT</span><span style={css("flex:1;height:1px;background:#e7ddcf;")}></span></div>
+                  <div style={css("display:flex;gap:8px;")}>
+                    <input value={typed} onChange={e=>setTyped(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')parseTyped();}} placeholder="e.g. Took 3 lakh from Ravi at 15% for 1 year" style={css("flex:1;border:1px solid #e3d9c9;background:#fff;border-radius:14px;padding:13px 14px;font-size:13px;font-weight:600;color:#2A2420;outline:none;")} />
+                    <button onClick={parseTyped} style={css("border:none;background:#2A2420;color:#fff;border-radius:14px;padding:0 18px;font-size:14px;font-weight:800;cursor:pointer;")}>Go</button>
+                  </div>
+                </div>
+              )}
+
+              {addStep==='listen' && (
+                <div style={css("text-align:center;padding:10px 0 6px;")}>
+                  <div style={css("position:relative;width:104px;height:104px;margin:0 auto 22px;")}>
+                    <span style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};animation:pulseRing 1.6s ease-out infinite;`)}></span>
+                    <span style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};animation:pulseRing 1.6s ease-out infinite .6s;`)}></span>
+                    <div style={css(`position:absolute;inset:0;border-radius:50%;background:${ACCENT};display:flex;align-items:center;justify-content:center;gap:4px;`)}>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb1 .9s ease-in-out infinite;")}></span>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb2 .9s ease-in-out infinite;")}></span>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb3 .9s ease-in-out infinite;")}></span>
+                      <span style={css("width:5px;background:#fff;border-radius:3px;animation:mb4 .9s ease-in-out infinite;")}></span>
+                    </div>
+                  </div>
+                  <div style={css(`font-size:14px;font-weight:800;color:${ACCENT};margin-bottom:14px;`)}>Listening…</div>
+                  <div style={css("font-size:17px;font-weight:700;color:#2A2420;line-height:1.45;min-height:48px;max-width:280px;margin:0 auto;")}>{transcript}</div>
+                  <button onClick={()=>{ if(recogRef.current) try{recogRef.current.stop();}catch(e){} }} style={css("margin-top:18px;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:14px;padding:10px 20px;font-size:13px;font-weight:800;cursor:pointer;")}>Done</button>
+                </div>
+              )}
+
+              {addStep==='preview' && (
+                <div style={css("animation:floatUp .3s ease;")}>
+                  <div style={css("display:flex;align-items:center;gap:8px;margin-bottom:4px;")}>
+                    <span style={css("width:8px;height:8px;border-radius:50%;background:#2A9D8F;")}></span>
+                    <div style={css("font-size:19px;font-weight:800;color:#2A2420;")}>Here's what I caught</div>
+                  </div>
+                  <div style={css("font-size:13px;font-weight:600;color:#8C8278;background:#f3ede3;border-radius:12px;padding:9px 12px;margin:8px 0 18px;font-style:italic;")}>“{transcript}”</div>
+
+                  <div style={css("display:flex;gap:8px;margin-bottom:14px;")}>
+                    {kindOpts.map(k=>(
+                      <button key={k.value} onClick={()=>setDraftField('kind',k.value)} style={css(segStyle(draftV.kind===k.value, ACCENT))}>{k.label}</button>
+                    ))}
+                  </div>
+
+                  <div style={css("background:#fff;border:1px solid #efe7db;border-radius:20px;padding:6px 16px;margin-bottom:14px;")}>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Amount</span>
+                      <div style={css("display:flex;align-items:center;gap:2px;")}><span style={css("font-size:17px;font-weight:800;color:#2A2420;")}>₹</span><input value={draftV.amount} onChange={e=>setDraftField('amount',e.target.value)} style={css("width:120px;text-align:right;border:none;background:none;font-size:17px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                    </div>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>{partyLabel}</span>
+                      <input value={draftV.party} onChange={e=>setDraftField('party',e.target.value)} style={css("width:170px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                    </div>
+                    <div style={css("display:flex;gap:14px;border-bottom:1px solid #f1ebe1;")}>
+                      <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;padding:13px 0;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Rate</span>
+                        <div style={css("display:flex;align-items:center;gap:1px;")}><input value={draftV.rate} onChange={e=>setDraftField('rate',e.target.value)} style={css("width:42px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} /><span style={css("font-size:14px;font-weight:800;color:#2A2420;")}>%</span></div>
+                      </div>
+                      <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-left:1px solid #f1ebe1;padding-left:14px;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Months</span>
+                        <input value={draftV.term} onChange={e=>setDraftField('term',e.target.value)} style={css("width:44px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                      </div>
+                    </div>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Received via</span>
+                      <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
+                        <button onClick={()=>setDraftField('method','cash')} style={css(seg2Style(draftV.method==='cash'))}>Cash</button>
+                        <button onClick={()=>setDraftField('method','bank')} style={css(seg2Style(draftV.method==='bank'))}>Bank</button>
+                      </div>
+                    </div>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Date</span>
+                      <input type="date" value={draftV.date} onChange={e=>setDraftField('date',e.target.value)} style={css("width:160px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                    </div>
+                    <div style={css("padding:13px 0;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:7px;")}>Purpose</span>
+                      <input value={draftV.purpose} onChange={e=>setDraftField('purpose',e.target.value)} placeholder="What's it for?" style={css("width:100%;border:none;background:none;font-size:15px;font-weight:700;color:#2A2420;outline:none;")} />
+                    </div>
+                  </div>
+
+                  <div style={css("background:#fff;border:1px solid #efe7db;border-radius:16px;padding:13px 14px;margin-bottom:8px;")}>
+                    <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:6px;")}>Notes</span>
+                    <textarea value={draftV.notes} onChange={e=>setDraftField('notes',e.target.value)} placeholder="Add a note (optional)…" rows="2" style={css("width:100%;border:none;background:none;font-size:14px;font-weight:600;color:#2A2420;outline:none;resize:none;")} />
+                  </div>
+
+                  {draftV.kind!=='asset' && (
+                    <div style={css("background:#f1f7f5;border:1px solid #dcebe6;border-radius:14px;padding:11px 14px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;")}>
+                      <span style={css("font-size:12px;font-weight:700;color:#2A9D8F;")}>Interest over {draftV.term||0} mo</span>
+                      <span style={css("font-size:15px;font-weight:800;color:#2A9D8F;")}>{draftInterest}</span>
+                    </div>
+                  )}
+
+                  <div style={css("display:flex;gap:10px;")}>
+                    <button onClick={()=>setAddStep('capture')} style={css("flex:none;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:16px;padding:15px 18px;font-size:14px;font-weight:800;cursor:pointer;")}>Redo</button>
+                    <button onClick={confirmAdd} style={css(`flex:1;border:none;background:${ACCENT};color:#fff;border-radius:16px;padding:15px;font-size:15px;font-weight:800;cursor:pointer;box-shadow:0 10px 22px -8px ${ACCENT_SHADOW};`)}>Add transaction</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
