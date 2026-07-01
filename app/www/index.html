@@ -908,8 +908,8 @@ function App({ user, onSignOut }){
 
   /* ---------- render ---------- */
   return (
-    <div className="frameWrap" style={css("min-height:100vh;width:100%;background:radial-gradient(120% 120% at 50% 0%,#efe7db 0%,#e4dccf 100%);display:flex;align-items:center;justify-content:center;padding:40px 20px;font-family:'Nunito',sans-serif;")}>
-      <div className="phone" style={css("position:relative;width:390px;height:844px;background:#FBF6EF;border-radius:46px;box-shadow:0 2px 1px rgba(0,0,0,.04),0 30px 60px -20px rgba(60,40,20,.35),0 0 0 11px #1f1b16,0 0 0 12px #3a3229;overflow:hidden;")}>
+    <div className="frameWrap" style={css(frameOuter)}>
+      <div className="phone" style={css(frameInner)}>
 
         {/* ===== HOME ===== */}
         {screen==='home' && (
@@ -1944,9 +1944,22 @@ function MoneyGraph({ parties, netCompact, onOpen }){
     </div>
   );
 }
+// On a real phone (Capacitor native, or any narrow viewport) the app fills the
+// whole screen. On a wide desktop browser we still show the pretty phone mockup
+// (bezel + centred frame) so the web preview looks like a device.
+const IS_PHONE = (()=>{ try{
+  if(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return true;
+  return window.matchMedia && window.matchMedia('(max-width: 640px)').matches;
+}catch(e){ return false; } })();
+const frameOuter = IS_PHONE
+  ? "width:100%;min-height:100vh;background:#FBF6EF;font-family:'Nunito',sans-serif;"
+  : "min-height:100vh;width:100%;background:radial-gradient(120% 120% at 50% 0%,#efe7db 0%,#e4dccf 100%);display:flex;align-items:center;justify-content:center;padding:40px 20px;font-family:'Nunito',sans-serif;";
+const frameInner = IS_PHONE
+  ? "position:relative;width:100%;height:100vh;height:100dvh;background:#FBF6EF;overflow:hidden;"
+  : "position:relative;width:390px;height:844px;background:#FBF6EF;border-radius:46px;box-shadow:0 2px 1px rgba(0,0,0,.04),0 30px 60px -20px rgba(60,40,20,.35),0 0 0 11px #1f1b16,0 0 0 12px #3a3229;overflow:hidden;";
 const Shell = ({children}) => (
-  <div style={css("min-height:100vh;width:100%;background:radial-gradient(120% 120% at 50% 0%,#efe7db 0%,#e4dccf 100%);display:flex;align-items:center;justify-content:center;padding:40px 20px;font-family:'Nunito',sans-serif;")}>
-    <div style={css("position:relative;width:390px;height:844px;background:#FBF6EF;border-radius:46px;box-shadow:0 2px 1px rgba(0,0,0,.04),0 30px 60px -20px rgba(60,40,20,.35),0 0 0 11px #1f1b16,0 0 0 12px #3a3229;overflow:hidden;")}>{children}</div>
+  <div style={css(frameOuter)}>
+    <div style={css(frameInner)}>{children}</div>
   </div>
 );
 const authInput = "width:100%;border:1.5px solid #e3d9c9;background:#fff;border-radius:14px;padding:14px 15px;font-size:15px;font-weight:600;color:#2A2420;outline:none;margin-bottom:11px;box-sizing:border-box;";
