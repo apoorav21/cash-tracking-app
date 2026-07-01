@@ -565,6 +565,30 @@ function App({ user, onSignOut }){
   // Return to the list, discarding the current chat if it's still empty.
   const closeConv = () => { setConvs(prev=>prev.filter(c=> c.id!==activeConv || (c.msgs && c.msgs.length))); setActiveConv(null); };
 
+  // Android hardware / gesture back button → navigate within the app (like the
+  // in-app ‹ arrows) instead of quitting. Fires for both 3-button and gesture nav.
+  const handleBack = () => {
+    if(confirmDelete){ setConfirmDelete(null); return; }
+    if(instFor){ setInstFor(null); return; }
+    if(repayFor){ setRepayFor(null); return; }
+    if(pwOpen){ setPwOpen(false); return; }
+    if(addOpen){ closeAdd(); return; }
+    if(screen==='detail'){ setScreen(back||'people'); setDetailParty(null); return; }
+    if(screen==='assistant' && active){ closeConv(); return; }
+    if(screen!=='home'){ setScreen('home'); return; }
+    // Home, nothing open → let Android exit/minimise the app.
+    try{ window.Capacitor?.Plugins?.App?.exitApp?.(); }catch(e){}
+  };
+  const backRef = useRef(handleBack); backRef.current = handleBack;
+  useEffect(()=>{
+    const A = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+    if(!A || !A.addListener) return;                 // browser / no native shell → in-app arrows only
+    let handle;
+    const p = A.addListener('backButton', ()=>{ backRef.current(); });
+    Promise.resolve(p).then(h=>{ handle=h; });
+    return ()=>{ Promise.resolve(p).then(h=>{ const rm=(h&&h.remove)||(handle&&handle.remove); if(rm) rm.call(h||handle); }); };
+  }, []);
+
   const copyText = async (t) => {
     try{ await navigator.clipboard.writeText(t); }
     catch(e){ const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(_){} ta.remove(); }
