@@ -26,6 +26,8 @@
   @keyframes mb3{0%,100%{height:14px;}50%{height:36px;}}
   @keyframes mb4{0%,100%{height:26px;}50%{height:12px;}}
   @keyframes floatUp{from{transform:translateY(8px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes bootPop{0%{transform:scale(.82);opacity:0;}60%{transform:scale(1.04);}100%{transform:scale(1);opacity:1;}}
   @media (max-width:440px){
     .frameWrap{padding:0 !important;}
     .phone{width:100vw !important;height:100vh !important;height:100dvh !important;border-radius:0 !important;box-shadow:none !important;}
@@ -68,23 +70,13 @@ const SAMPLES = [
   'Took 6 lakh from Mehta Finance at 14% for 2 years for business',
 ];
 
-function seed(){
-  return [
-    { id:1, kind:'borrowed', party:'Ramesh Uncle', amount:400000, date:'2026-03-15', rate:12, rateBasis:'annual', term:6, method:'cash', purpose:'Business working capital', notes:'Family loan, no paperwork. Pay on time.', repayments:[] },
-    { id:2, kind:'borrowed', party:'Priya Shah', amount:250000, date:'2026-01-10', rate:18, rateBasis:'annual', term:12, method:'bank', purpose:'Inventory purchase', notes:'', repayments:[] },
-    { id:3, kind:'borrowed', party:'Mehta Finance', amount:600000, date:'2025-11-01', rate:14, rateBasis:'annual', term:24, method:'bank', purpose:'Property down-payment', notes:'NBFC loan, EMI auto-debit from HDFC.', repayments:[] },
-    { id:4, kind:'lent', party:'Suresh Patel', amount:300000, date:'2026-04-01', rate:2, rateBasis:'monthly', term:6, method:'bank', purpose:'His shop expansion', notes:'Funded from the Ramesh loan. दो रुपए सैकड़ा.', repayments:[{date:'2026-05-10',amount:100000,method:'cash',note:'Partial — first किश्त'}] },
-    { id:5, kind:'lent', party:'Anil Verma', amount:150000, date:'2026-05-05', rate:1.25, rateBasis:'monthly', term:3, method:'cash', purpose:'Short-term bridge', notes:'सवा रुपए सैकड़ा.', repayments:[] },
-    { id:6, kind:'lent', party:'Deepak Rao', amount:200000, date:'2026-02-12', rate:1.5, rateBasis:'monthly', term:9, method:'bank', purpose:'Truck purchase', notes:'Cousin, reliable. डेढ़ रुपए सैकड़ा.', repayments:[] },
-    { id:7, kind:'asset', party:'Greenfield Plot', amount:500000, date:'2026-02-20', rate:0, term:0, method:'bank', purpose:'Land investment', notes:'Bought from Vijay using Mehta Finance funds. Sector 12.' },
-  ];
-}
 // Storage is namespaced per signed-in user so two accounts on one device never
-// mix. uid is the Cognito `sub` (or undefined before login).
+// mix. uid is the Cognito `sub` (or undefined before login). New accounts start
+// empty — no demo/seed rows.
 const storeKey = (uid)=> STORE_KEY + (uid?(':'+uid):'');
 function loadLocal(uid){
   try{ const raw=localStorage.getItem(storeKey(uid)); if(raw){ const p=JSON.parse(raw); if(Array.isArray(p)) return p; } }catch(e){}
-  return seed();
+  return [];
 }
 function saveLocal(uid,t){ try{ localStorage.setItem(storeKey(uid), JSON.stringify(t)); }catch(e){} }
 
@@ -169,6 +161,32 @@ const accrued = (t)=> interestDue(t);
 const TINT = { '#E5544B':'#FBEAE7','#E76F51':'#FBEAE7','#C44536':'#FBEAE7','#2A9D8F':'#E4F2EF','#1F9488':'#E4F2EF','#36A38C':'#E4F2EF','#E9A23B':'#FBF1DC' };
 const tintFor = c => TINT[c] || '#f1ece3';
 
+// Colour that represents a *person's* net position (borrowed=red, lent=green,
+// asset=amber). Unlike the name-based palette this is always live, so a person
+// flips colour the moment their balance flips (e.g. a lent loan is deleted and
+// only a borrowing remains). Use this wherever the whole person is shown.
+const KIND_COLOR = { borrowed:'#E5544B', lent:'#2A9D8F', asset:'#E9A23B' };
+
+// Property / asset metadata.
+const ASSET_TYPES = [['plot','Plot'],['flat','Flat'],['land','Land'],['house','House'],['commercial','Commercial'],['gold','Gold'],['silver','Silver'],['other','Other']];
+const ASSET_ICON = { plot:'🗺️', flat:'🏢', land:'🌾', house:'🏠', commercial:'🏬', gold:'🪙', silver:'🥈', other:'📦' };
+const AREA_UNITS = [['sqft','sq ft'],['gaj','gaj'],['sqyd','sq yd'],['sqm','sq m'],['acre','acre'],['bigha','bigha'],['marla','marla']];
+const unitLabel = (u)=> (AREA_UNITS.find(x=>x[0]===u)||['','sq ft'])[1];
+const assetTypeLabel = (s)=> (ASSET_TYPES.find(x=>x[0]===s)||['','Property'])[1];
+// Total paid toward an asset (sum of instalments); falls back to nothing.
+const assetPaid = (t)=> (t.payments||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);
+function personNet(txns, party){
+  let lend=0, borrow=0, asset=0, hasDebt=false;
+  txns.filter(t=>t.party===party).forEach(t=>{
+    if(t.kind==='asset'){ asset+=(parseFloat(t.amount)||0); return; }
+    hasDebt=true;
+    const v=outstanding(t)+interestDue(t);
+    if(t.kind==='lent') lend+=v; else borrow+=v;
+  });
+  const kind = hasDebt ? (lend>=borrow ? 'lent' : 'borrowed') : 'asset';
+  return { kind, color:KIND_COLOR[kind], lend, borrow, asset, net: kind==='asset'?asset:Math.abs(lend-borrow) };
+}
+
 /* ---------- offline NL parser (fallback when Bedrock unavailable) ---------- */
 function parseLocal(text){
   const t=' '+text.toLowerCase()+' ';
@@ -223,6 +241,19 @@ function draftFrom(d){
     date:d.date||TODAY.toISOString().slice(0,10),
     purpose:d.purpose!=null?String(d.purpose):'',
     notes:d.notes!=null?String(d.notes):'',
+    // Asset / property fields
+    subtype:d.subtype||'plot',
+    area:d.area!=null&&d.area!==''?String(d.area):'',
+    areaUnit:d.areaUnit||'sqft',
+    location:d.location!=null?String(d.location):'',
+    marketValue:d.marketValue!=null&&d.marketValue!==''?String(d.marketValue):'',
+    rent:d.rent!=null&&d.rent!==''?String(d.rent):'',
+    nextDue:d.nextDue||'',
+    // Existing instalments (editable when editing an asset)
+    payments: Array.isArray(d.payments) ? d.payments.map(p=>({ date:p.date||'', amount:p.amount!=null?String(p.amount):'', method:p.method==='bank'?'bank':'cash', note:p.note||'' })) : [],
+    // Purchase split — only used when creating a new asset (seeds instalments)
+    payCash:'',
+    payBank:'',
   };
 }
 
@@ -254,6 +285,8 @@ function App({ user, onSignOut }){
   const [editingId, setEditingId] = useState(null);     // non-null => editing an existing txn
   const [repayFor, setRepayFor] = useState(null);        // txn being repaid (modal)
   const [repayDraft, setRepayDraft] = useState({ amount:'', date:isoToday(), method:'cash', note:'' });
+  const [instFor, setInstFor] = useState(null);          // asset being paid an instalment (modal)
+  const [instDraft, setInstDraft] = useState({ amount:'', pct:'', date:isoToday(), method:'cash', note:'' });
   const [confirmDelete, setConfirmDelete] = useState(null); // txn pending delete
   // Assistant (Munshi) — conversations (ChatGPT/Claude-style history)
   const [convs, setConvs] = useState(()=>loadChats(uid));        // [{id,title,msgs,createdAt,updatedAt}]
@@ -290,7 +323,7 @@ function App({ user, onSignOut }){
           if(alive && remote){
             // Register colours for any unknown parties.
             remote.forEach(t=>{ if(!paletteRef.current[t.party]) paletteRef.current[t.party]= t.kind==='lent'?'#2A9D8F':t.kind==='asset'?'#E9A23B':'#E5544B'; });
-            setTxns(remote.length ? remote : seed());
+            setTxns(remote);
           }
         }catch(e){ /* keep local cache */ }
         finally{ if(alive) setSyncing(false); }
@@ -318,6 +351,10 @@ function App({ user, onSignOut }){
 
   const openParty = (p) => { setBack(screen); setDetailParty(p); setScreen('detail'); };
   const setDraftField = (k,v) => setDraft(d => ({...d, [k]:v}));
+  // Editing an asset's instalment rows in the draft.
+  const setPayField = (i,k,v) => setDraft(d => { const ps=[...(d.payments||[])]; ps[i]={...ps[i],[k]:v}; return {...d, payments:ps}; });
+  const addPayRow = () => setDraft(d => ({...d, payments:[...(d.payments||[]), { date:d.date||isoToday(), amount:'', method:'cash', note:'' }]}));
+  const removePayRow = (i) => setDraft(d => { const ps=[...(d.payments||[])]; ps.splice(i,1); return {...d, payments:ps}; });
 
   // Upsert a transaction: optimistic local update + cloud save (PutCommand
   // overwrites by txnId, so the same call handles both add and edit).
@@ -357,6 +394,19 @@ function App({ user, onSignOut }){
     await persistTxn(updated);
     showToast(t.kind==='lent'?'किश्त दर्ज हो गई ✓':'Repayment saved ✓');
   };
+  // Asset instalments — record a payment made toward a property.
+  const openInstallment = (t) => { setInstFor(t); setInstDraft({ amount:'', pct:'', date:isoToday(), method:'cash', note:'' }); };
+  const saveInstallment = async () => {
+    const t = instFor;
+    const amount = parseFloat(instDraft.amount)||0;
+    if(!t || amount<=0){ setInstFor(null); return; }
+    const pay = { date:instDraft.date||isoToday(), amount, method:instDraft.method||'cash', note:(instDraft.note||'').trim() };
+    const updated = { ...t, payments:[...(t.payments||[]), pay] };
+    setInstFor(null);
+    await persistTxn(updated);
+    showToast('किश्त दर्ज हो गई ✓ · Installment saved');
+  };
+
   // Interest owed up to a given date, after a hypothetical principal payment now.
   const interestTillToday = (t) => Math.round(interestDue(t));
 
@@ -377,6 +427,12 @@ function App({ user, onSignOut }){
           ['party','purpose','notes'].forEach(k=>{ if(ai[k]!=null && String(ai[k]).trim()!=='') merged[k]=String(ai[k]); });
           ['amount','rate','term'].forEach(k=>{ if(ai[k]!=null && ai[k]!=='' && Number(ai[k])>0) merged[k]=String(ai[k]); });
           if(ai.date) merged.date=ai.date;
+          // Asset / property fields
+          if(ASSET_TYPES.find(x=>x[0]===ai.subtype)) merged.subtype=ai.subtype;
+          if(AREA_UNITS.find(x=>x[0]===ai.areaUnit)) merged.areaUnit=ai.areaUnit;
+          ['area','marketValue','rent'].forEach(k=>{ if(ai[k]!=null && ai[k]!=='' && Number(ai[k])>0) merged[k]=String(ai[k]); });
+          if(ai.location!=null && String(ai.location).trim()!=='') merged.location=String(ai.location);
+          if(ai.nextDue) merged.nextDue=ai.nextDue;
           return merged;
         });
       }
@@ -437,6 +493,21 @@ function App({ user, onSignOut }){
       interestType:d.interestType==='compound'?'compound':'simple',
       term:parseFloat(d.term)||0, method:d.method, purpose:d.purpose||'', notes:d.notes||'',
       repayments: existing?.repayments || [] };
+    if(d.kind==='asset'){
+      txn.subtype=d.subtype||'plot'; txn.area=parseFloat(d.area)||0; txn.areaUnit=d.areaUnit||'sqft';
+      txn.location=(d.location||'').trim(); txn.marketValue=parseFloat(d.marketValue)||0; txn.rent=parseFloat(d.rent)||0;
+      txn.nextDue=d.nextDue||'';
+      if(existing){
+        // Keep the (possibly edited) instalment rows from the draft.
+        txn.payments = (d.payments||[]).map(p=>({ date:p.date||d.date, amount:parseFloat(p.amount)||0, method:p.method==='bank'?'bank':'cash', note:(p.note||'').trim() })).filter(p=>p.amount>0);
+      } else {
+        // Seed instalments from the "paid at purchase" cash/bank split.
+        const c=parseFloat(d.payCash)||0, b=parseFloat(d.payBank)||0, pays=[];
+        if(c>0) pays.push({ date:d.date, amount:c, method:'cash', note:'At purchase' });
+        if(b>0) pays.push({ date:d.date, amount:b, method:'bank', note:'At purchase' });
+        txn.payments = pays;
+      }
+    }
     const wasEdit = !!editingId;
     setAddOpen(false); setEditingId(null);
     if(!editingId){ setScreen('activity'); setFilter('all'); }
@@ -555,12 +626,22 @@ function App({ user, onSignOut }){
     ...(c.notes!=null?{notes:c.notes}:{}), ...(c.date?{date:c.date}:{}) });
 
   // Normalise one assistant-proposed txn into our shape.
-  const txnFromAction = (a, idx=0) => ({ id:`${Date.now()}${idx}`,
-    kind:['borrowed','lent','asset'].includes(a.kind)?a.kind:'lent',
-    party:(a.party||'Unknown').trim(), amount:parseFloat(a.amount)||0, date:a.date||isoToday(),
-    rate:parseFloat(a.rate)||0, rateBasis:a.rateBasis==='annual'?'annual':'monthly',
-    interestType:a.interestType==='compound'?'compound':'simple', term:parseFloat(a.term)||0,
-    method:a.method==='bank'?'bank':'cash', purpose:a.purpose||'', notes:a.notes||'', repayments:[] });
+  const txnFromAction = (a, idx=0) => { const kind=['borrowed','lent','asset'].includes(a.kind)?a.kind:'lent';
+    const base={ id:`${Date.now()}${idx}`, kind,
+      party:(a.party||'Unknown').trim(), amount:parseFloat(a.amount)||0, date:a.date||isoToday(),
+      rate:parseFloat(a.rate)||0, rateBasis:a.rateBasis==='annual'?'annual':'monthly',
+      interestType:a.interestType==='compound'?'compound':'simple', term:parseFloat(a.term)||0,
+      method:a.method==='bank'?'bank':'cash', purpose:a.purpose||'', notes:a.notes||'', repayments:[] };
+    if(kind==='asset'){
+      base.subtype=(ASSET_TYPES.find(x=>x[0]===a.subtype)?a.subtype:'plot');
+      base.area=parseFloat(a.area)||0; base.areaUnit=(AREA_UNITS.find(x=>x[0]===a.areaUnit)?a.areaUnit:'sqft');
+      base.location=a.location||''; base.marketValue=parseFloat(a.marketValue)||0; base.rent=parseFloat(a.rent)||0; base.nextDue=a.nextDue||'';
+      // Munshi may pass a purchase split as payments[] {amount,method,note} or cash/bank shortcuts.
+      let pays = Array.isArray(a.payments) ? a.payments.map(p=>({ date:p.date||base.date, amount:parseFloat(p.amount)||0, method:p.method==='bank'?'bank':'cash', note:p.note||'At purchase' })).filter(p=>p.amount>0) : [];
+      if(!pays.length){ const c=parseFloat(a.paidCash)||0, b=parseFloat(a.paidBank)||0; if(c>0)pays.push({date:base.date,amount:c,method:'cash',note:'At purchase'}); if(b>0)pays.push({date:base.date,amount:b,method:'bank',note:'At purchase'}); }
+      base.payments=pays;
+    }
+    return base; };
 
   // Apply an assistant-proposed action after the user taps Confirm. Guards against
   // double-tap (idempotent on the message's `applied` flag).
@@ -586,6 +667,18 @@ function App({ user, onSignOut }){
           await persistTxn({ ...t, repayments:[...(t.repayments||[]), { date:action.date||isoToday(), principal, interest, amount:principal+interest, method:action.method==='bank'?'bank':'cash', note:action.note||'' }] });
           note='Repayment saved ✓';
         } else note='No matching loan found';
+      } else if(action.type==='installment'){
+        const t=[...txns].filter(x=>x.kind==='asset' && x.party && action.party && x.party.toLowerCase()===String(action.party).toLowerCase())
+          .sort((x,y)=>pd(y.date)-pd(x.date))[0];
+        if(t){
+          let amount=parseFloat(action.amount)||0;
+          const pct=parseFloat(action.percent)||0;
+          if(amount<=0 && pct>0) amount=Math.round((parseFloat(t.amount)||0)*pct/100);
+          if(amount>0){
+            await persistTxn({ ...t, payments:[...(t.payments||[]), { date:action.date||isoToday(), amount, method:action.method==='bank'?'bank':'cash', note:action.note||'' }] });
+            note='Installment saved ✓';
+          } else note='No amount for the installment';
+        } else note='No matching property found';
       } else if(action.type==='edit' && action.changes){
         const t=findEditTarget(action);
         if(t){ await persistTxn(applyEditChanges(t, action.changes)); note='Updated ✓'; }
@@ -649,7 +742,7 @@ function App({ user, onSignOut }){
   const gLen=C*(receivable/tot), rLen=C*(payable/tot);
   const netCompact=compact(net);
 
-  const upcoming = txns.filter(t=>t.kind!=='asset' && outstanding(t)>0).map(t=>{
+  const loanUpcoming = txns.filter(t=>t.kind!=='asset' && outstanding(t)>0).map(t=>{
     const mat=addMonths(pd(t.date),t.term);
     const dl=days(TODAY,mat);
     const due=outstanding(t)+interestFull(t)-accrued(t);
@@ -659,25 +752,33 @@ function App({ user, onSignOut }){
       amount:compact(due), color:pay?'#E5544B':'#2A9D8F', tint:pay?'#FBEAE7':'#E4F2EF',
       day:mat.getDate(), mon:MON[mat.getMonth()],
       daysLeft: dl<0?Math.abs(dl)+'d ago':(dl===0?'today':'in '+dl+'d') };
-  }).sort((a,b)=>a.mat-b.mat).slice(0,5);
+  });
+  // Asset instalments that have a "next payment due" date and still owe a balance.
+  const assetUpcoming = txns.filter(t=>t.kind==='asset' && t.nextDue && (parseFloat(t.amount)||0)-assetPaid(t)>0).map(t=>{
+    const mat=pd(t.nextDue); const dl=days(TODAY,mat); const rem=(parseFloat(t.amount)||0)-assetPaid(t);
+    return { id:t.id, mat, party:t.party, sub:'Next installment · '+(ASSET_ICON[t.subtype]||'🏠')+' '+assetTypeLabel(t.subtype),
+      amount:compact(rem), color:'#E9A23B', tint:'#FBF1DC', day:mat.getDate(), mon:MON[mat.getMonth()],
+      daysLeft: dl<0?Math.abs(dl)+'d ago':(dl===0?'today':'in '+dl+'d') };
+  });
+  const upcoming = [...loanUpcoming, ...assetUpcoming].sort((a,b)=>a.mat-b.mat).slice(0,5);
 
   const order=['Ramesh Uncle','Mehta Finance','Priya Shah','Greenfield Plot','Suresh Patel','Deepak Rao','Anil Verma'];
   const extra=[...new Set(txns.map(t=>t.party))].filter(p=>!order.includes(p));
   const present=[...order,...extra].filter(p=>txns.some(t=>t.party===p));
-  const cx=175,cy=190,R=140, gn=present.length||1;
-  const nodes=[],edges=[];
-  present.forEach((p,i)=>{
-    const ang=(-90 + i*(360/gn))*Math.PI/180;
-    const x=cx+R*Math.cos(ang), y=cy+R*Math.sin(ang);
+  // Node data for the interactive Money Map (positions/physics live in <MoneyGraph>).
+  const graphParties = present.map((p)=>{
     const pt=txns.filter(t=>t.party===p);
-    const col=pColor(p);
+    const pn=personNet(txns,p);
     const sum=pt.reduce((s,t)=>s+(t.kind==='asset'?t.amount:outstanding(t)),0);
     // A party with loans but nothing outstanding (and no interest due) is fully
     // settled — keep them on the map as a standalone, faded node.
     const hasAsset=pt.some(t=>t.kind==='asset');
     const settled=!hasAsset && pt.every(t=>outstanding(t)<=0 && interestDue(t)<=0);
-    nodes.push({ name:p, initials:initials(p), color:col, amount:settled?'settled':compact(sum), x, y, settled });
-    edges.push({ x, y, color:settled?'#d8cfc1':col, w:settled?1.5:Math.max(2,Math.min(7,sum/100000)), settled });
+    return { name:p, initials:initials(p), color:pn.color,
+      amount:settled?'settled':compact(sum), settled,
+      // Money-flow direction: 'in' = they → You (you borrowed), 'out' = You → them (lent/asset).
+      dir: pn.kind==='borrowed' ? 'in' : 'out',
+      w: settled?1.6:Math.max(2,Math.min(7,sum/100000)) };
   });
 
   const grp=(kind)=>{
@@ -686,7 +787,7 @@ function App({ user, onSignOut }){
       const pt=txns.filter(t=>t.party===p);
       const principal=pt.reduce((s,t)=>s+outstanding(t),0);
       const acc=pt.reduce((s,t)=>s+accrued(t),0);
-      const col=pColor(p);
+      const col=KIND_COLOR[kind];
       const rates=[...new Set(pt.map(t=>t.rate))];
       const basis=pt.every(t=>t.rateBasis==='annual')?' p.a.':'/mo';
       return { name:p, initials:initials(p), color:col, tint:tintFor(col),
@@ -703,7 +804,7 @@ function App({ user, onSignOut }){
   let activity=[...txns].sort((a,b)=>pd(b.date)-pd(a.date));
   if(filter!=='all') activity=activity.filter(t=>t.kind===filter);
   activity=activity.map((t,i)=>({
-    key:t.id||i, party:t.party, initials:initials(t.party), color:KMAP[t.kind], tint:tintFor(pColor(t.party)),
+    key:t.id||i, party:t.party, initials:initials(t.party), color:KMAP[t.kind], tint:tintFor(KMAP[t.kind]),
     title:KLBL[t.kind]+' '+t.party, date:fmtDate(pd(t.date)),
     method:t.method==='cash'?'Cash':'Bank',
     signed:(t.kind==='lent'?'+':t.kind==='borrowed'?'−':'')+compact(t.amount),
@@ -713,25 +814,53 @@ function App({ user, onSignOut }){
   if(detailParty){
     const p=detailParty, pt=txns.filter(t=>t.party===p);
     if(pt.length){
-      const kind=pt[0].kind, col=pColor(p);
-      const bal=pt.reduce((s,t)=>s+(t.kind==='asset'?t.amount:outstanding(t)),0);
-      const acc=pt.reduce((s,t)=>s+interestDue(t),0);
+      const pn=personNet(txns,p), kind=pn.kind, col=pn.color;
+      const bal=pn.kind==='asset'
+        ? pt.reduce((s,t)=>s+(t.kind==='asset'?(parseFloat(t.amount)||0):0),0)
+        : Math.abs(
+            pt.reduce((s,t)=>s+(t.kind==='lent'?outstanding(t):0),0) -
+            pt.reduce((s,t)=>s+(t.kind==='borrowed'?outstanding(t):0),0));
+      const acc=Math.abs(
+        pt.reduce((s,t)=>s+(t.kind==='lent'?interestDue(t):0),0) -
+        pt.reduce((s,t)=>s+(t.kind==='borrowed'?interestDue(t):0),0));
       const settled=pt.every(t=>t.kind==='asset'?false:(outstanding(t)<=0 && interestDue(t)<=0));
       const rel=kind==='borrowed'?'You borrowed from them':kind==='lent'?'You lent to them':'Asset you own';
       const netLabel=kind==='borrowed'?'You owe (outstanding + interest)':kind==='lent'?'They owe you (outstanding + interest)':'Asset value';
       const KLBL2={borrowed:'Borrowed',lent:'Lent',asset:'Asset'};
+      const isAsset = kind==='asset';
+      const aPrice = pt.reduce((s,t)=>s+(t.kind==='asset'?(parseFloat(t.amount)||0):0),0);
+      const aPaid  = pt.reduce((s,t)=>s+(t.kind==='asset'?assetPaid(t):0),0);
+      const aMkt   = pt.reduce((s,t)=>s+(t.kind==='asset'?(parseFloat(t.marketValue)||0):0),0);
+      const aRent  = pt.reduce((s,t)=>s+(t.kind==='asset'?(parseFloat(t.rent)||0):0),0);
       detail={ name:p, initials:initials(p), color:col, tint:tintFor(col), relation:rel, netLabel, settled,
-        net:inr(bal+acc), accrued:compact(acc), totalDue:compact(bal+acc),
-        txns: pt.map((t,i)=>({
-          key:t.id||i, raw:t, amount:inr(t.amount), kind:KLBL2[t.kind], color:KMAP[t.kind], tint:tintFor(pColor(p)),
-          rate:t.kind==='asset'?'—':t.rate+'% '+(t.rateBasis==='annual'?'p.a.':'/mo')+(t.interestType==='compound'?' · compound':''), term:t.kind==='asset'?'—':t.term+' months',
+        net:inr(isAsset?aPrice:(bal+acc)), accrued:compact(acc), totalDue:compact(bal+acc),
+        isAsset,
+        asset: isAsset ? {
+          price:inr(aPrice), paid:inr(aPaid), remaining:inr(Math.max(0,aPrice-aPaid)),
+          pct: aPrice>0?Math.min(100,Math.round(aPaid/aPrice*100)):0, fullyPaid: aPrice>0 && aPaid>=aPrice,
+          hasMkt:aMkt>0, mkt:inr(aMkt), gainUp:(aMkt-aPrice)>=0, gainStr:((aMkt-aPrice)>=0?'+':'−')+inr(Math.abs(aMkt-aPrice)),
+          hasRent:aRent>0, rent:inr(aRent) } : null,
+        txns: pt.map((t,i)=> t.kind==='asset' ? (()=>{ const price=parseFloat(t.amount)||0, paid=assetPaid(t), rem=Math.max(0,price-paid), ar=parseFloat(t.area)||0, per=ar>0?price/ar:0, mkt=parseFloat(t.marketValue)||0, rent=parseFloat(t.rent)||0; return {
+          key:t.id||i, raw:t, isAsset:true, amount:inr(price),
+          icon:ASSET_ICON[t.subtype]||'📦', typeLabel:assetTypeLabel(t.subtype),
+          hasArea:ar>0, area: ar>0?(ar+' '+unitLabel(t.areaUnit)):'', perUnit: per>0?(inr(Math.round(per))+'/'+unitLabel(t.areaUnit)):'',
+          hasLocation:!!t.location, location:t.location||'',
+          price:inr(price), paid:inr(paid), remaining:inr(rem), pct: price>0?Math.min(100,Math.round(paid/price*100)):0, fullyPaid: price>0 && rem<=0,
+          hasMkt:mkt>0, mkt:inr(mkt), gainUp:(mkt-price)>=0, gainStr:((mkt-price)>=0?'+':'−')+inr(Math.abs(mkt-price)),
+          hasRent:rent>0, rent:inr(rent),
+          hasNextDue: !!t.nextDue && rem>0, nextDue: t.nextDue?fmtDate(pd(t.nextDue)):'', nextDueDays: t.nextDue?Math.round((pd(t.nextDue)-TODAY)/86400000):0,
+          start:fmtDate(pd(t.date)), method:t.method==='cash'?'Cash':'Bank transfer',
+          pays:(t.payments||[]).map((r,j)=>({key:j, when:fmtDate(pd(r.date)), amount:inr(parseFloat(r.amount)||0), method:r.method==='bank'?'Bank':'Cash', note:r.note||''})),
+          hasPurpose:!!t.purpose, purpose:t.purpose, hasNotes:!!t.notes, notes:t.notes }; })() : {
+          key:t.id||i, raw:t, isAsset:false, amount:inr(t.amount), kind:KLBL2[t.kind], color:KMAP[t.kind], tint:tintFor(KMAP[t.kind]),
+          rate:t.rate+'% '+(t.rateBasis==='annual'?'p.a.':'/mo')+(t.interestType==='compound'?' · compound':''), term:t.term+' months',
           start:fmtDate(pd(t.date)),
-          matures:t.kind==='asset'?'—':fmtDate(addMonths(pd(t.date),t.term)),
+          matures:fmtDate(addMonths(pd(t.date),t.term)),
           method:t.method==='cash'?'Cash':'Bank transfer',
-          outstanding:t.kind==='asset'?'':compact(outstanding(t)),
-          fullyPaid:t.kind!=='asset' && outstanding(t)<=0 && interestDue(t)<=0,
+          outstanding:compact(outstanding(t)),
+          fullyPaid: outstanding(t)<=0 && interestDue(t)<=0,
           repays:(t.repayments||[]).map((r,j)=>{ const pr=repPrincipal(r), it=repInterest(r); return {key:j, when:fmtDate(pd(r.date)), principal:pr?inr(pr):'', interest:it?inr(it):'', amount:inr(pr+it), method:r.method==='bank'?'Bank':'Cash', note:r.note||''}; }),
-          hasPurpose:!!t.purpose, purpose:t.purpose, hasNotes:!!t.notes, notes:t.notes })) };
+          hasPurpose:!!t.purpose, purpose:t.purpose, hasNotes:!!t.notes, notes:t.notes }) };
     }
   }
 
@@ -856,25 +985,8 @@ function App({ user, onSignOut }){
         {screen==='graph' && (
           <div className="scr" style={css("position:absolute;inset:0;overflow-y:auto;padding:62px 20px 110px;")}>
             <div style={css("margin-bottom:6px;font-size:23px;font-weight:800;color:#2A2420;letter-spacing:-.3px;")}>Money Map</div>
-            <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:8px;")}>Tap any node to see the relationship</div>
-            <div style={css("position:relative;width:350px;height:380px;margin:0 auto;")}>
-              <svg width="350" height="380" style={css("position:absolute;inset:0;overflow:visible;")}>
-                {edges.map((e,i)=>(
-                  <line key={i} x1="175" y1="190" x2={e.x} y2={e.y} stroke={e.color} strokeWidth={e.w} strokeLinecap="round" opacity="0.45"></line>
-                ))}
-              </svg>
-              <div style={css("position:absolute;left:175px;top:190px;transform:translate(-50%,-50%);width:78px;height:78px;border-radius:50%;background:#2A2420;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 24px -8px rgba(42,36,32,.6);z-index:5;")}>
-                <span style={css("font-size:18px;font-weight:900;")}>You</span>
-                <span style={css("font-size:9px;font-weight:700;color:#a9a298;")}>{netCompact}</span>
-              </div>
-              {nodes.map((n,i)=>(
-                <div key={i} onClick={()=>openParty(n.name)} style={css(`position:absolute;left:${n.x}px;top:${n.y}px;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:pointer;z-index:6;opacity:${n.settled?0.62:1};`)}>
-                  <div style={css(`width:54px;height:54px;border-radius:50%;background:#fff;border:${n.settled?'2px dashed #c7bcab':'3px solid '+n.color};display:flex;align-items:center;justify-content:center;color:${n.settled?'#a89f93':n.color};font-weight:800;font-size:15px;box-shadow:0 6px 14px -6px rgba(60,40,20,.4);`)}>{n.initials}</div>
-                  <div style={css("font-size:11px;font-weight:800;color:#2A2420;margin-top:5px;text-align:center;max-width:78px;line-height:1.15;white-space:nowrap;")}>{n.name}</div>
-                  <div style={css(`font-size:10px;font-weight:800;color:${n.settled?'#a89f93':n.color};margin-top:2px;`)}>{n.settled?'✓ settled':n.amount}</div>
-                </div>
-              ))}
-            </div>
+            <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:8px;")}>Drag to rearrange · arrows show which way money flows · tap a node to open</div>
+            <MoneyGraph parties={graphParties} netCompact={netCompact} onOpen={openParty} />
             <div style={css("display:flex;justify-content:center;gap:18px;margin-top:8px;flex-wrap:wrap;")}>
               <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#E5544B;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>You borrowed</span></div>
               <div style={css("display:flex;align-items:center;gap:6px;")}><span style={css("width:18px;height:3px;border-radius:2px;background:#2A9D8F;")}></span><span style={css("font-size:12px;font-weight:700;color:#8C8278;")}>You lent</span></div>
@@ -961,14 +1073,76 @@ function App({ user, onSignOut }){
             <div style={css(`background:${detail.color};border-radius:24px;padding:20px;color:#fff;margin-bottom:18px;box-shadow:0 14px 28px -14px rgba(0,0,0,.4);`)}>
               <div style={css("font-size:12px;font-weight:700;opacity:.85;")}>{detail.netLabel}</div>
               <div style={css("font-size:30px;font-weight:900;letter-spacing:-.6px;margin:2px 0 14px;")}>{detail.net}</div>
-              <div style={css("display:flex;gap:10px;")}>
-                <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Interest accrued</div><div style={css("font-size:16px;font-weight:800;")}>{detail.accrued}</div></div>
-                <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Due at maturity</div><div style={css("font-size:16px;font-weight:800;")}>{detail.totalDue}</div></div>
-              </div>
+              {detail.isAsset ? (
+                <>
+                  <div style={css("height:8px;border-radius:6px;background:rgba(255,255,255,.25);overflow:hidden;margin-bottom:12px;")}><div style={css(`height:100%;width:${detail.asset.pct}%;background:#fff;border-radius:6px;transition:width .3s;`)}></div></div>
+                  <div style={css("display:flex;gap:10px;")}>
+                    <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Paid · {detail.asset.pct}%</div><div style={css("font-size:16px;font-weight:800;")}>{detail.asset.paid}</div></div>
+                    <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>{detail.asset.fullyPaid?'Status':'Remaining'}</div><div style={css("font-size:16px;font-weight:800;")}>{detail.asset.fullyPaid?'✓ Paid':detail.asset.remaining}</div></div>
+                  </div>
+                  {(detail.asset.hasMkt || detail.asset.hasRent) && (
+                    <div style={css("display:flex;gap:10px;margin-top:10px;")}>
+                      {detail.asset.hasMkt && <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Value now</div><div style={css("font-size:16px;font-weight:800;")}>{detail.asset.mkt} <span style={css("font-size:11px;font-weight:800;opacity:.92;")}>({detail.asset.gainStr})</span></div></div>}
+                      {detail.asset.hasRent && <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Rent / mo</div><div style={css("font-size:16px;font-weight:800;")}>{detail.asset.rent}</div></div>}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={css("display:flex;gap:10px;")}>
+                  <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Interest accrued</div><div style={css("font-size:16px;font-weight:800;")}>{detail.accrued}</div></div>
+                  <div style={css("flex:1;background:rgba(255,255,255,.18);border-radius:14px;padding:10px 12px;")}><div style={css("font-size:11px;font-weight:700;opacity:.85;")}>Due at maturity</div><div style={css("font-size:16px;font-weight:800;")}>{detail.totalDue}</div></div>
+                </div>
+              )}
             </div>
-            <div style={css("font-size:14px;font-weight:800;color:#2A2420;margin-bottom:10px;")}>Transactions</div>
+            <div style={css("font-size:14px;font-weight:800;color:#2A2420;margin-bottom:10px;")}>{detail.isAsset?'Property':'Transactions'}</div>
             <div style={css("display:flex;flex-direction:column;gap:10px;")}>
-              {detail.txns.map((t)=>(
+              {detail.txns.map((t)=> t.isAsset ? (
+                <div key={t.key} style={css("background:#fff;border-radius:18px;padding:15px;border:1px solid #efe7db;")}>
+                  <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;")}>
+                    <div style={css("display:flex;align-items:center;gap:9px;")}>
+                      <span style={css("font-size:22px;")}>{t.icon}</span>
+                      <div><div style={css("font-size:16px;font-weight:800;color:#2A2420;")}>{t.price}</div>{t.hasLocation && <div style={css("font-size:11px;font-weight:600;color:#a89f93;")}>📍 {t.location}</div>}</div>
+                    </div>
+                    <span style={css("font-size:11px;font-weight:800;color:#E9A23B;padding:3px 10px;border-radius:20px;background:#FBF1DC;")}>{t.typeLabel}</span>
+                  </div>
+                  <div style={css("height:7px;border-radius:6px;background:#f0e9dc;overflow:hidden;margin-bottom:8px;")}><div style={css(`height:100%;width:${t.pct}%;background:#E9A23B;border-radius:6px;`)}></div></div>
+                  <div style={css("display:flex;justify-content:space-between;font-size:12px;font-weight:800;margin-bottom:12px;")}>
+                    <span style={css("color:#2A9D8F;")}>Paid {t.paid} · {t.pct}%</span>
+                    <span style={css(`color:${t.fullyPaid?'#2A9D8F':'#E5544B'};`)}>{t.fullyPaid?'✓ Fully paid':`Remaining ${t.remaining}`}</span>
+                  </div>
+                  {t.hasNextDue && (
+                    <div style={css(`display:flex;align-items:center;gap:8px;background:${t.nextDueDays<0?'#fdf0ee':'#FBF1DC'};border-radius:12px;padding:9px 12px;margin-bottom:10px;`)}>
+                      <span style={css("font-size:15px;")}>🗓️</span>
+                      <span style={css(`font-size:12px;font-weight:800;color:${t.nextDueDays<0?'#E5544B':'#B8801F'};`)}>Next payment due {t.nextDue}{t.nextDueDays<0?` · ${Math.abs(t.nextDueDays)}d overdue`:t.nextDueDays===0?' · today':` · in ${t.nextDueDays}d`}</span>
+                    </div>
+                  )}
+                  <div style={css("display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:10px;")}>
+                    {t.hasArea && <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Size</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.area}</div></div>}
+                    {t.perUnit && <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Price/unit</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.perUnit}</div></div>}
+                    <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Bought</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.start}</div></div>
+                    {t.hasMkt && <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Value now</div><div style={css(`font-size:13px;font-weight:800;color:${t.gainUp?'#2A9D8F':'#E5544B'};`)}>{t.mkt} ({t.gainStr})</div></div>}
+                    {t.hasRent && <div><div style={css("font-size:10px;font-weight:700;color:#a89f93;")}>Rent/mo</div><div style={css("font-size:13px;font-weight:800;color:#2A2420;")}>{t.rent}</div></div>}
+                  </div>
+                  {t.hasPurpose && <div style={css("font-size:13px;font-weight:600;color:#6f665c;background:#f7f1e7;border-radius:12px;padding:9px 11px;")}>{t.purpose}</div>}
+                  {t.hasNotes && <div style={css("font-size:12px;font-weight:600;color:#8C8278;margin-top:8px;font-style:italic;")}>“{t.notes}”</div>}
+                  {t.pays.length>0 && (
+                    <div style={css("margin-top:10px;border-top:1px dashed #ece4d8;padding-top:9px;")}>
+                      <div style={css("font-size:10px;font-weight:800;color:#a89f93;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;")}>Installments</div>
+                      {t.pays.map(r=>(
+                        <div key={r.key} style={css("display:flex;align-items:center;justify-content:space-between;padding:3px 0;gap:8px;")}>
+                          <span style={css("font-size:12px;font-weight:700;color:#6f665c;")}>{r.when} · {r.method}{r.note?' · '+r.note:''}</span>
+                          <span style={css("font-size:13px;font-weight:800;color:#2A9D8F;white-space:nowrap;")}>{r.amount}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={css("display:flex;gap:8px;margin-top:12px;")}>
+                    {!t.fullyPaid && <button onClick={()=>openInstallment(t.raw)} style={css("flex:1;border:1px solid #f0e2c4;background:#FBF1DC;color:#B8801F;border-radius:11px;padding:9px 0;font-size:12px;font-weight:800;cursor:pointer;")}>＋ Installment</button>}
+                    <button onClick={()=>editTxn(t.raw)} style={css("flex:1;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:11px;padding:9px 0;font-size:12px;font-weight:800;cursor:pointer;")}>Edit</button>
+                    <button onClick={()=>setConfirmDelete(t.raw)} style={css("flex:none;border:1px solid #f3d6d2;background:#fdf0ee;color:#E5544B;border-radius:11px;padding:9px 14px;font-size:12px;font-weight:800;cursor:pointer;")}>Delete</button>
+                  </div>
+                </div>
+              ) : (
                 <div key={t.key} style={css("background:#fff;border-radius:18px;padding:15px;border:1px solid #efe7db;")}>
                   <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;")}>
                     <span style={css("font-size:16px;font-weight:800;color:#2A2420;")}>{t.amount}</span>
@@ -997,7 +1171,7 @@ function App({ user, onSignOut }){
                     </div>
                   )}
                   <div style={css("display:flex;gap:8px;margin-top:12px;")}>
-                    {t.raw.kind!=='asset' && <button onClick={()=>openRepay(t.raw)} style={css("flex:1;border:1px solid #dcebe6;background:#f1f7f5;color:#2A9D8F;border-radius:11px;padding:9px 0;font-size:12px;font-weight:800;cursor:pointer;")}>＋ Repayment</button>}
+                    <button onClick={()=>openRepay(t.raw)} style={css("flex:1;border:1px solid #dcebe6;background:#f1f7f5;color:#2A9D8F;border-radius:11px;padding:9px 0;font-size:12px;font-weight:800;cursor:pointer;")}>＋ Repayment</button>
                     <button onClick={()=>editTxn(t.raw)} style={css("flex:1;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:11px;padding:9px 0;font-size:12px;font-weight:800;cursor:pointer;")}>Edit</button>
                     <button onClick={()=>setConfirmDelete(t.raw)} style={css("flex:none;border:1px solid #f3d6d2;background:#fdf0ee;color:#E5544B;border-radius:11px;padding:9px 14px;font-size:12px;font-weight:800;cursor:pointer;")}>Delete</button>
                   </div>
@@ -1112,7 +1286,9 @@ function App({ user, onSignOut }){
                     )}
                     {m.action && (()=>{ const A=m.action;
                       const addList = A.type==='add' ? (Array.isArray(A.txns)?A.txns:(A.txn?[A.txn]:[])) : [];
-                      const lbl = (a)=>`${a.kind==='lent'?'Lend':a.kind==='borrowed'?'Borrow':'Asset'} ${inr(parseFloat(a.amount)||0)} · ${a.party||'—'}${a.rate?` · ${a.rate}% ${a.rateBasis==='annual'?'p.a.':'/mo'}${a.interestType==='compound'?' compound':''}`:''}${a.term?` · ${a.term} mo`:''} · ${a.method==='bank'?'Bank':'Cash'}`;
+                      const lbl = (a)=> a.kind==='asset'
+                        ? `${ASSET_ICON[a.subtype]||'📦'} ${assetTypeLabel(a.subtype)} ${inr(parseFloat(a.amount)||0)} · ${a.party||'—'}${a.area?` · ${a.area} ${unitLabel(a.areaUnit)}`:''}${a.location?` · ${a.location}`:''}${Array.isArray(a.payments)&&a.payments.length?` · paid ${inr(a.payments.reduce((s,p)=>s+(parseFloat(p.amount)||0),0))}`:''}`
+                        : `${a.kind==='lent'?'Lend':'Borrow'} ${inr(parseFloat(a.amount)||0)} · ${a.party||'—'}${a.rate?` · ${a.rate}% ${a.rateBasis==='annual'?'p.a.':'/mo'}${a.interestType==='compound'?' compound':''}`:''}${a.term?` · ${a.term} mo`:''} · ${a.method==='bank'?'Bank':'Cash'}`;
                       const editTgt = A.type==='edit' ? findEditTarget(A) : null;
                       const editRes = editTgt ? applyEditChanges(editTgt, A.changes||{}) : null;
                       const changed = A.type==='edit' ? Object.keys(A.changes||{}) : [];
@@ -1122,6 +1298,7 @@ function App({ user, onSignOut }){
                         <div style={css("font-size:13px;font-weight:700;color:#2A2420;margin-bottom:10px;display:flex;flex-direction:column;gap:5px;")}>{
                           A.type==='add' ? addList.map((a,k)=>(<div key={k}>{addList.length>1?`${k+1}. `:''}{lbl(a)}</div>)) :
                           A.type==='repayment' ? (()=>{ const pr=parseFloat(A.principal)||0, it=parseFloat(A.interest)||0; const tip=A.interestTillToday&&it<=0?' + interest till today':''; return <div>{`Repayment from ${A.party}: ${pr?'principal '+inr(pr):''}${pr&&it?' + ':''}${it?'interest '+inr(it):''}${tip}`}</div>; })() :
+                          A.type==='installment' ? (()=>{ const amt=parseFloat(A.amount)||0, pct=parseFloat(A.percent)||0; return <div>{`🏠 Installment · ${A.party}: ${amt?inr(amt):(pct?pct+'% of total':'—')}${A.method?` · ${A.method==='bank'?'Bank':'Cash'}`:''}`}</div>; })() :
                           A.type==='edit' ? (editRes ? (<>
                             <div>{lbl(editRes)}</div>
                             {changed.length>0 && <div style={css("font-size:11px;font-weight:700;color:#2A9D8F;")}>changed: {changed.join(', ')}</div>}
@@ -1334,13 +1511,14 @@ function App({ user, onSignOut }){
 
                   <div style={css("background:#fff;border:1px solid #efe7db;border-radius:20px;padding:6px 16px;margin-bottom:14px;")}>
                     <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
-                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Amount</span>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>{draftV.kind==='asset'?'Total price':'Amount'}</span>
                       <div style={css("display:flex;align-items:center;gap:2px;")}><span style={css("font-size:17px;font-weight:800;color:#2A2420;")}>₹</span><input value={draftV.amount} onChange={e=>setDraftField('amount',e.target.value)} inputMode="numeric" style={css("width:120px;text-align:right;border:none;background:none;font-size:17px;font-weight:800;color:#2A2420;outline:none;")} /></div>
                     </div>
                     <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
                       <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>{partyLabel}</span>
                       <input value={draftV.party} onChange={e=>setDraftField('party',e.target.value)} style={css("width:170px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
                     </div>
+                    {draftV.kind!=='asset' && (
                     <div style={css("display:flex;gap:14px;border-bottom:1px solid #f1ebe1;")}>
                       <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;padding:13px 0;")}>
                         <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Rate</span>
@@ -1351,6 +1529,7 @@ function App({ user, onSignOut }){
                         <input value={draftV.term} onChange={e=>setDraftField('term',e.target.value)} inputMode="numeric" style={css("width:44px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
                       </div>
                     </div>
+                    )}
                     {draftV.kind!=='asset' && (
                       <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
                         <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Rate basis</span>
@@ -1369,6 +1548,7 @@ function App({ user, onSignOut }){
                         </div>
                       </div>
                     )}
+                    {draftV.kind!=='asset' && (
                     <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
                       <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Received via</span>
                       <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
@@ -1376,6 +1556,7 @@ function App({ user, onSignOut }){
                         <button onClick={()=>setDraftField('method','bank')} style={css(seg2Style(draftV.method==='bank'))}>Bank</button>
                       </div>
                     </div>
+                    )}
                     <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
                       <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Date</span>
                       <input type="date" value={draftV.date} onChange={e=>setDraftField('date',e.target.value)} style={css("width:160px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
@@ -1385,6 +1566,107 @@ function App({ user, onSignOut }){
                       <input value={draftV.purpose} onChange={e=>setDraftField('purpose',e.target.value)} placeholder="What's it for?" style={css("width:100%;border:none;background:none;font-size:15px;font-weight:700;color:#2A2420;outline:none;")} />
                     </div>
                   </div>
+
+                  {draftV.kind==='asset' && (()=>{ const price=parseFloat(draftV.amount)||0, ar=parseFloat(draftV.area)||0, per=ar>0?price/ar:0; return (
+                  <div style={css("background:#fff;border:1px solid #efe7db;border-radius:20px;padding:6px 16px;margin-bottom:14px;")}>
+                    <div style={css("padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:8px;")}>Property type</span>
+                      <div style={css("display:flex;flex-wrap:wrap;gap:6px;")}>
+                        {ASSET_TYPES.map(([v,l])=>(
+                          <button key={v} onClick={()=>setDraftField('subtype',v)} style={css(chipStyle(draftV.subtype===v))}>{ASSET_ICON[v]} {l}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;gap:10px;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Size</span>
+                      <div style={css("display:flex;align-items:center;gap:8px;")}>
+                        <input value={draftV.area} onChange={e=>setDraftField('area',e.target.value)} inputMode="decimal" placeholder="0" style={css("width:70px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                        <select value={draftV.areaUnit} onChange={e=>setDraftField('areaUnit',e.target.value)} style={css("border:1px solid #ece4d8;border-radius:9px;padding:6px 8px;font-size:13px;font-weight:800;color:#2A2420;background:#faf6ef;outline:none;")}>
+                          {AREA_UNITS.map(([v,l])=>(<option key={v} value={v}>{l}</option>))}
+                        </select>
+                      </div>
+                    </div>
+                    {per>0 && (
+                      <div style={css("display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f1ebe1;")}>
+                        <span style={css("font-size:12px;font-weight:700;color:#a89f93;")}>Price per {unitLabel(draftV.areaUnit)}</span>
+                        <span style={css("font-size:13px;font-weight:800;color:#E9A23B;")}>{inr(Math.round(per))}</span>
+                      </div>
+                    )}
+                    <div style={css("padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:6px;")}>Location</span>
+                      <input value={draftV.location} onChange={e=>setDraftField('location',e.target.value)} placeholder="e.g. Sector 12, Jaipur" style={css("width:100%;border:none;background:none;font-size:15px;font-weight:700;color:#2A2420;outline:none;")} />
+                    </div>
+                    <div style={css("display:flex;gap:14px;border-bottom:1px solid #f1ebe1;")}>
+                      <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;padding:13px 0;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Value now</span>
+                        <div style={css("display:flex;align-items:center;gap:1px;")}><span style={css("font-size:14px;font-weight:800;color:#2A2420;")}>₹</span><input value={draftV.marketValue} onChange={e=>setDraftField('marketValue',e.target.value)} inputMode="numeric" placeholder="—" style={css("width:72px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                      </div>
+                      <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-left:1px solid #f1ebe1;padding-left:14px;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Rent/mo</span>
+                        <div style={css("display:flex;align-items:center;gap:1px;")}><span style={css("font-size:14px;font-weight:800;color:#2A2420;")}>₹</span><input value={draftV.rent} onChange={e=>setDraftField('rent',e.target.value)} inputMode="numeric" placeholder="—" style={css("width:56px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                      </div>
+                    </div>
+                    <div style={css("display:flex;align-items:center;justify-content:space-between;padding:13px 0;border-bottom:1px solid #f1ebe1;")}>
+                      <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Next payment due</span>
+                      <input type="date" value={draftV.nextDue} onChange={e=>setDraftField('nextDue',e.target.value)} style={css("width:160px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                    </div>
+                    {editingId && (
+                      <div style={css("padding:13px 0;")}>
+                        <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;")}>
+                          <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Installments paid</span>
+                          <button onClick={addPayRow} style={css("border:1px solid #f0e2c4;background:#FBF1DC;color:#B8801F;border-radius:9px;padding:5px 11px;font-size:11px;font-weight:800;cursor:pointer;")}>＋ Add</button>
+                        </div>
+                        {(draftV.payments||[]).length===0 && <div style={css("font-size:12px;font-weight:600;color:#a89f93;")}>No installments yet — tap ＋ Add to record one.</div>}
+                        <div style={css("display:flex;flex-direction:column;gap:8px;")}>
+                          {(draftV.payments||[]).map((p,i)=>(
+                            <div key={i} style={css("background:#faf6ef;border:1px solid #ece4d8;border-radius:12px;padding:9px 11px;")}>
+                              <div style={css("display:flex;align-items:center;gap:8px;margin-bottom:7px;")}>
+                                <span style={css("font-size:13px;font-weight:800;color:#2A2420;")}>₹</span>
+                                <input value={p.amount} onChange={e=>setPayField(i,'amount',e.target.value)} inputMode="numeric" placeholder="0" style={css("flex:1;border:none;background:none;font-size:14px;font-weight:800;color:#2A2420;outline:none;")} />
+                                <button onClick={()=>removePayRow(i)} style={css("flex:none;border:none;background:none;color:#E5544B;font-size:18px;font-weight:900;cursor:pointer;line-height:1;")}>×</button>
+                              </div>
+                              <div style={css("display:flex;align-items:center;gap:8px;")}>
+                                <input type="date" value={p.date} onChange={e=>setPayField(i,'date',e.target.value)} style={css("flex:none;border:none;background:none;font-size:12px;font-weight:700;color:#6f665c;outline:none;")} />
+                                <div style={css("display:flex;gap:4px;background:#fff;border-radius:9px;padding:2px;margin-left:auto;")}>
+                                  <button onClick={()=>setPayField(i,'method','cash')} style={css(seg2Style(p.method!=='bank'))}>Cash</button>
+                                  <button onClick={()=>setPayField(i,'method','bank')} style={css(seg2Style(p.method==='bank'))}>Bank</button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {(draftV.payments||[]).length>0 && (()=>{ const paid=(draftV.payments||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0), rem=price-paid; return (
+                          <div style={css("display:flex;justify-content:space-between;margin-top:10px;font-size:12px;font-weight:800;")}>
+                            <span style={css("color:#2A9D8F;")}>Paid {inr(paid)}{price>0?` · ${Math.round(paid/price*100)}%`:''}</span>
+                            <span style={css(`color:${rem>0?'#E5544B':'#2A9D8F'};`)}>{rem>0?`Remaining ${inr(rem)}`:'Fully paid ✓'}</span>
+                          </div>
+                        ); })()}
+                      </div>
+                    )}
+                    {!editingId && (
+                      <div style={css("padding:13px 0;")}>
+                        <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:3px;")}>Paid at purchase</span>
+                        <span style={css("font-size:11px;font-weight:600;color:#a89f93;display:block;margin-bottom:8px;")}>Split the down-payment — leave blank if nothing paid yet</span>
+                        <div style={css("display:flex;gap:10px;")}>
+                          <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;background:#faf6ef;border:1px solid #ece4d8;border-radius:11px;padding:9px 11px;")}>
+                            <span style={css("font-size:12px;font-weight:800;color:#8C8278;")}>💵 Cash</span>
+                            <div style={css("display:flex;align-items:center;gap:1px;")}><span style={css("font-size:13px;font-weight:800;color:#2A2420;")}>₹</span><input value={draftV.payCash} onChange={e=>setDraftField('payCash',e.target.value)} inputMode="numeric" placeholder="0" style={css("width:66px;text-align:right;border:none;background:none;font-size:14px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                          </div>
+                          <div style={css("flex:1;display:flex;align-items:center;justify-content:space-between;background:#faf6ef;border:1px solid #ece4d8;border-radius:11px;padding:9px 11px;")}>
+                            <span style={css("font-size:12px;font-weight:800;color:#8C8278;")}>🏦 Bank</span>
+                            <div style={css("display:flex;align-items:center;gap:1px;")}><span style={css("font-size:13px;font-weight:800;color:#2A2420;")}>₹</span><input value={draftV.payBank} onChange={e=>setDraftField('payBank',e.target.value)} inputMode="numeric" placeholder="0" style={css("width:66px;text-align:right;border:none;background:none;font-size:14px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                          </div>
+                        </div>
+                        {(()=>{ const paid=(parseFloat(draftV.payCash)||0)+(parseFloat(draftV.payBank)||0), rem=price-paid; return paid>0 ? (
+                          <div style={css("display:flex;justify-content:space-between;margin-top:9px;font-size:12px;font-weight:800;")}>
+                            <span style={css("color:#2A9D8F;")}>Paid {inr(paid)}{price>0?` · ${Math.round(paid/price*100)}%`:''}</span>
+                            <span style={css(`color:${rem>0?'#E5544B':'#2A9D8F'};`)}>{rem>0?`Remaining ${inr(rem)}`:'Fully paid ✓'}</span>
+                          </div>
+                        ) : null; })()}
+                      </div>
+                    )}
+                  </div>
+                  ); })()}
 
                   <div style={css("background:#fff;border:1px solid #efe7db;border-radius:16px;padding:13px 14px;margin-bottom:8px;")}>
                     <span style={css("font-size:13px;font-weight:700;color:#8C8278;display:block;margin-bottom:6px;")}>Notes</span>
@@ -1474,6 +1756,50 @@ function App({ user, onSignOut }){
           </div>
         )}
 
+        {/* ===== INSTALLMENT MODAL (asset) ===== */}
+        {instFor && (()=>{ const price=parseFloat(instFor.amount)||0, paidSoFar=assetPaid(instFor), remaining=Math.max(0,price-paidSoFar);
+          const setAmt=(v)=>setInstDraft(r=>({...r,amount:String(Math.round(v))}));
+          return (
+          <div style={css("position:absolute;inset:0;z-index:55;")}>
+            <div onClick={()=>setInstFor(null)} style={css("position:absolute;inset:0;background:rgba(42,36,32,.45);animation:fadeIn .2s ease;")}></div>
+            <div style={css("position:absolute;left:0;right:0;bottom:0;background:#FBF6EF;border-radius:30px 30px 0 0;padding:14px 22px 28px;animation:slideUp .3s cubic-bezier(.2,.9,.3,1);")}>
+              <div style={css("width:42px;height:5px;border-radius:3px;background:#dcd3c5;margin:0 auto 14px;")}></div>
+              <div style={css("font-size:18px;font-weight:800;color:#2A2420;margin-bottom:2px;")}>Record an installment</div>
+              <div style={css("font-size:13px;font-weight:600;color:#8C8278;margin-bottom:8px;")}>{instFor.party} · paid {compact(paidSoFar)} of {compact(price)} · remaining {compact(remaining)}</div>
+              <div style={css("background:#fff;border:1px solid #efe7db;border-radius:18px;padding:6px 16px;margin-bottom:14px;")}>
+                <div style={css("display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1ebe1;")}>
+                  <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Amount paid</span>
+                  <div style={css("display:flex;align-items:center;gap:2px;")}><span style={css("font-size:16px;font-weight:800;color:#2A2420;")}>₹</span><input autoFocus value={instDraft.amount} onChange={e=>setInstDraft(r=>({...r,amount:e.target.value}))} inputMode="numeric" placeholder="0" style={css("width:120px;text-align:right;border:none;background:none;font-size:16px;font-weight:800;color:#2A2420;outline:none;")} /></div>
+                </div>
+                {price>0 && (
+                  <div style={css("display:flex;gap:6px;padding:10px 0;border-bottom:1px solid #f1ebe1;flex-wrap:wrap;")}>
+                    {[10,25,50].map(p=>(<button key={p} onClick={()=>setAmt(price*p/100)} style={css("border:1px solid #f0e2c4;background:#FBF1DC;color:#B8801F;border-radius:9px;padding:5px 11px;font-size:11px;font-weight:800;cursor:pointer;")}>{p}%</button>))}
+                    <button onClick={()=>setAmt(remaining)} style={css("border:1px solid #dcebe6;background:#f1f7f5;color:#2A9D8F;border-radius:9px;padding:5px 11px;font-size:11px;font-weight:800;cursor:pointer;")}>बाकी सब · {compact(remaining)}</button>
+                  </div>
+                )}
+                <div style={css("display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1ebe1;")}>
+                  <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Date</span>
+                  <input type="date" value={instDraft.date} onChange={e=>setInstDraft(r=>({...r,date:e.target.value}))} style={css("width:160px;text-align:right;border:none;background:none;font-size:15px;font-weight:800;color:#2A2420;outline:none;")} />
+                </div>
+                <div style={css("display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid #f1ebe1;")}>
+                  <span style={css("font-size:13px;font-weight:700;color:#8C8278;")}>Via</span>
+                  <div style={css("display:flex;gap:6px;background:#f3ede3;border-radius:11px;padding:3px;")}>
+                    <button onClick={()=>setInstDraft(r=>({...r,method:'cash'}))} style={css(seg2Style(instDraft.method==='cash'))}>Cash</button>
+                    <button onClick={()=>setInstDraft(r=>({...r,method:'bank'}))} style={css(seg2Style(instDraft.method==='bank'))}>Bank</button>
+                  </div>
+                </div>
+                <div style={css("padding:12px 0;")}>
+                  <input value={instDraft.note} onChange={e=>setInstDraft(r=>({...r,note:e.target.value}))} placeholder="Note (optional)…" style={css("width:100%;border:none;background:none;font-size:14px;font-weight:600;color:#2A2420;outline:none;")} />
+                </div>
+              </div>
+              <div style={css("display:flex;gap:10px;")}>
+                <button onClick={()=>setInstFor(null)} style={css("flex:none;border:1px solid #e3d9c9;background:#fff;color:#8C8278;border-radius:16px;padding:14px 18px;font-size:14px;font-weight:800;cursor:pointer;")}>Cancel</button>
+                <button onClick={saveInstallment} style={css("flex:1;border:none;background:#E9A23B;color:#fff;border-radius:16px;padding:14px;font-size:15px;font-weight:800;cursor:pointer;")}>Save installment</button>
+              </div>
+            </div>
+          </div>
+          ); })()}
+
         {/* ===== DELETE CONFIRM ===== */}
         {confirmDelete && (
           <div style={css("position:absolute;inset:0;z-index:56;display:flex;align-items:center;justify-content:center;padding:30px;")}>
@@ -1495,6 +1821,105 @@ function App({ user, onSignOut }){
 }
 
 /* ============================ AUTH ============================ */
+// Interactive, draggable "Money Map" — a small force-directed graph (Obsidian-style).
+// Nodes repel each other and are held to the central "You" node by a spring, so the
+// layout self-arranges and gently wiggles; drag a node and the rest react, then it
+// settles. Arrowheads point the way the money actually flows.
+function MoneyGraph({ parties, netCompact, onOpen }){
+  const CX=175, CY=190, L=124, REP=5200, REPC=1300, SPR=0.02, DAMP=0.88, VMAX=18, NR=34, CR=44;
+  const boxRef=useRef(null), nodeMap=useRef({}), dragRef=useRef(null), rafRef=useRef(null);
+  const onOpenRef=useRef(onOpen); onOpenRef.current=onOpen;
+  const [,setTick]=useState(0);
+  const clampX=(x)=>Math.max(28,Math.min(322,x));
+  const clampY=(y)=>Math.max(34,Math.min(342,y));
+
+  const step=()=>{
+    const arr=Object.values(nodeMap.current);
+    arr.forEach(a=>{ a.ax=0; a.ay=0; });
+    for(let i=0;i<arr.length;i++){ for(let j=i+1;j<arr.length;j++){
+      const a=arr[i], b=arr[j]; let dx=a.x-b.x, dy=a.y-b.y, d2=dx*dx+dy*dy; if(d2<1)d2=1;
+      const d=Math.sqrt(d2), f=REP/d2, fx=f*dx/d, fy=f*dy/d;
+      a.ax+=fx; a.ay+=fy; b.ax-=fx; b.ay-=fy;
+    }}
+    arr.forEach(a=>{
+      let dx=a.x-CX, dy=a.y-CY, d=Math.hypot(dx,dy)||0.01, ux=dx/d, uy=dy/d;
+      a.ax += (REPC/(d*d))*ux;            // gentle push off the centre
+      const s=SPR*(d-L); a.ax -= s*ux; a.ay -= s*uy;   // spring to rest radius
+      a.ay += (REPC/(d*d))*uy;
+    });
+    let ke=0;
+    arr.forEach(a=>{ if(a.fixed){ a.vx=0; a.vy=0; return; }
+      a.vx=(a.vx+a.ax)*DAMP; a.vy=(a.vy+a.ay)*DAMP;
+      a.vx=Math.max(-VMAX,Math.min(VMAX,a.vx)); a.vy=Math.max(-VMAX,Math.min(VMAX,a.vy));
+      a.x=clampX(a.x+a.vx); a.y=clampY(a.y+a.vy); ke+=a.vx*a.vx+a.vy*a.vy;
+    });
+    return ke;
+  };
+  const frame=()=>{ const ke=step(); setTick(t=>(t+1)&0xffff); rafRef.current = (ke>0.05 || dragRef.current) ? requestAnimationFrame(frame) : null; };
+  const ensure=()=>{ if(rafRef.current==null) rafRef.current=requestAnimationFrame(frame); };
+
+  const namesKey=parties.map(p=>p.name).join('|');
+  useEffect(()=>{
+    const map=nodeMap.current, names=parties.map(p=>p.name), n=parties.length||1;
+    parties.forEach((p,i)=>{ if(!map[p.name]){ const ang=(-90+i*(360/n))*Math.PI/180; map[p.name]={ x:CX+L*Math.cos(ang), y:CY+L*Math.sin(ang), vx:0, vy:0, ax:0, ay:0, fixed:false }; } });
+    Object.keys(map).forEach(k=>{ if(names.indexOf(k)<0) delete map[k]; });
+    ensure();
+  }, [namesKey]);
+
+  useEffect(()=>{
+    const move=(e)=>{ const d=dragRef.current; if(!d) return; const node=nodeMap.current[d.name]; if(!node||!boxRef.current) return;
+      const r=boxRef.current.getBoundingClientRect();
+      if(Math.hypot(e.clientX-d.sx, e.clientY-d.sy)>4) d.moved=true;
+      node.x=clampX((e.clientX-r.left)-d.ox); node.y=clampY((e.clientY-r.top)-d.oy); node.vx=0; node.vy=0; ensure();
+    };
+    const up=()=>{ const d=dragRef.current; if(!d) return; dragRef.current=null; const node=nodeMap.current[d.name]; if(node) node.fixed=false; if(!d.moved) onOpenRef.current(d.name); ensure(); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+    return ()=>{ window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); if(rafRef.current!=null){ cancelAnimationFrame(rafRef.current); rafRef.current=null; } };
+  }, []);
+
+  const down=(name)=>(e)=>{ e.preventDefault(); const node=nodeMap.current[name]; if(!node||!boxRef.current) return; const r=boxRef.current.getBoundingClientRect();
+    dragRef.current={ name, sx:e.clientX, sy:e.clientY, ox:(e.clientX-r.left)-node.x, oy:(e.clientY-r.top)-node.y, moved:false }; node.fixed=true; ensure(); };
+
+  const MK={ '#E5544B':'mgR', '#2A9D8F':'mgG', '#E9A23B':'mgA', '#d8cfc1':'mgX' };
+  const edges=parties.map(p=>{ const node=nodeMap.current[p.name]; if(!node) return null;
+    let dx=node.x-CX, dy=node.y-CY, d=Math.hypot(dx,dy)||0.01, ux=dx/d, uy=dy/d;
+    const col=p.settled?'#d8cfc1':p.color, inward=p.dir==='in';
+    // Leave a bigger gap before the arrow tip (headGap) so the chunky arrowhead
+    // sits clearly in open space, just off the destination node.
+    const headGap=inward?CR+9:NR+9;
+    const cE={x:CX+ux*CR, y:CY+uy*CR}, nE={x:node.x-ux*NR, y:node.y-uy*NR};
+    const tip = inward ? {x:CX+ux*headGap, y:CY+uy*headGap} : {x:node.x-ux*headGap, y:node.y-uy*headGap};
+    const tail = inward ? nE : cE;          // line runs from source toward the tip
+    // Cap line weight so a large balance can't get so thick it swallows the arrowhead.
+    return { key:p.name, x1:tail.x, y1:tail.y, x2:tip.x, y2:tip.y, col, w:p.settled?2:Math.max(2.5,Math.min(4.5,p.w)), mk:MK[col]||'mgG' };
+  }).filter(Boolean);
+
+  return (
+    <div ref={boxRef} style={css("position:relative;width:350px;height:380px;margin:0 auto;touch-action:none;")}>
+      <svg width="350" height="380" style={css("position:absolute;inset:0;overflow:visible;")}>
+        <defs>
+          {[['mgR','#E5544B'],['mgG','#2A9D8F'],['mgA','#E9A23B'],['mgX','#d8cfc1']].map(([id,c])=>(
+            <marker key={id} id={id} markerWidth="17" markerHeight="16" refX="13" refY="8" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1 L15 8 L1 15 L5 8 Z" fill={c}></path></marker>
+          ))}
+        </defs>
+        {edges.map(e=>(
+          <line key={e.key} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2} stroke={e.col} strokeWidth={e.w} strokeLinecap="round" opacity="0.55" markerEnd={`url(#${e.mk})`}></line>
+        ))}
+      </svg>
+      <div style={css("position:absolute;left:175px;top:190px;transform:translate(-50%,-50%);width:78px;height:78px;border-radius:50%;background:#2A2420;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 24px -8px rgba(42,36,32,.6);z-index:5;pointer-events:none;")}>
+        <span style={css("font-size:18px;font-weight:900;")}>You</span>
+        <span style={css("font-size:9px;font-weight:700;color:#a9a298;")}>{netCompact}</span>
+      </div>
+      {parties.map((n)=>{ const node=nodeMap.current[n.name]; if(!node) return null; return (
+        <div key={n.name} onPointerDown={down(n.name)} style={css(`position:absolute;left:${node.x}px;top:${node.y}px;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:grab;z-index:6;opacity:${n.settled?0.62:1};touch-action:none;user-select:none;`)}>
+          <div style={css(`width:54px;height:54px;border-radius:50%;background:#fff;border:${n.settled?'2px dashed #c7bcab':'3px solid '+n.color};display:flex;align-items:center;justify-content:center;color:${n.settled?'#a89f93':n.color};font-weight:800;font-size:15px;box-shadow:0 6px 14px -6px rgba(60,40,20,.4);`)}>{n.initials}</div>
+          <div style={css("font-size:11px;font-weight:800;color:#2A2420;margin-top:5px;text-align:center;max-width:78px;line-height:1.15;white-space:nowrap;pointer-events:none;")}>{n.name}</div>
+          <div style={css(`font-size:10px;font-weight:800;color:${n.settled?'#a89f93':n.color};margin-top:2px;pointer-events:none;`)}>{n.settled?'✓ settled':n.amount}</div>
+        </div>
+      ); })}
+    </div>
+  );
+}
 const Shell = ({children}) => (
   <div style={css("min-height:100vh;width:100%;background:radial-gradient(120% 120% at 50% 0%,#efe7db 0%,#e4dccf 100%);display:flex;align-items:center;justify-content:center;padding:40px 20px;font-family:'Nunito',sans-serif;")}>
     <div style={css("position:relative;width:390px;height:844px;background:#FBF6EF;border-radius:46px;box-shadow:0 2px 1px rgba(0,0,0,.04),0 30px 60px -20px rgba(60,40,20,.35),0 0 0 11px #1f1b16,0 0 0 12px #3a3229;overflow:hidden;")}>{children}</div>
@@ -1660,9 +2085,10 @@ function Root(){
   const signOut = async ()=>{ try{ await Backend.signOut(); }catch(e){} setUser(null); };
 
   if(booting){
-    return <Shell><div style={css("position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;")}>
-      <div style={css("width:54px;height:54px;border-radius:17px;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:26px;animation:fadeIn .3s ease;")}>₹</div>
-      <div style={css("font-size:13px;font-weight:700;color:#a89f93;")}>Loading…</div>
+    return <Shell><div style={css("position:absolute;inset:0;background:#FBF6EF;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;")}>
+      <div style={css("width:84px;height:84px;border-radius:24px;background:linear-gradient(140deg,#F2B07A,#E5544B);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:42px;box-shadow:0 16px 34px -12px rgba(229,84,75,.6);animation:bootPop .5s cubic-bezier(.34,1.4,.64,1) both;")}>₹</div>
+      <div style={css("font-size:24px;font-weight:900;letter-spacing:-.5px;color:#2A2420;animation:fadeIn .5s .1s ease both;")}>Cashflow</div>
+      <div style={css("width:26px;height:26px;border-radius:50%;border:3px solid #ece3d4;border-top-color:#E5544B;animation:spin .7s linear infinite;margin-top:6px;")}></div>
     </div></Shell>;
   }
   // If Cognito isn't configured, fall back to a guest session so the app still runs.

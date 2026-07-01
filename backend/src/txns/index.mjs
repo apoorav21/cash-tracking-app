@@ -23,6 +23,8 @@ const reply = (statusCode, body) => ({ statusCode, headers, body: JSON.stringify
 
 const KINDS = new Set(['borrowed', 'lent', 'asset']);
 const METHODS = new Set(['cash', 'bank']);
+const ASSET_TYPES = new Set(['plot', 'flat', 'land', 'house', 'commercial', 'gold', 'silver', 'other']);
+const AREA_UNITS = new Set(['sqft', 'gaj', 'sqyd', 'sqm', 'acre', 'bigha', 'marla']);
 const num = (v) => {
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : 0;
@@ -45,6 +47,16 @@ function clean(input) {
         };
       })
     : [];
+  // Asset instalments — money paid toward a property/asset over time (purchase
+  // splits and later किश्तें). Same shape as a plain payment.
+  const payments = Array.isArray(input.payments)
+    ? input.payments.slice(0, 200).map((r) => ({
+        date: str(r && r.date, 10) || new Date().toISOString().slice(0, 10),
+        amount: num(r && r.amount),
+        method: METHODS.has(r && r.method) ? r.method : 'cash',
+        note: str(r && r.note, 300),
+      }))
+    : [];
   return {
     txnId: str(input.id || input.txnId) || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     kind: KINDS.has(input.kind) ? input.kind : 'borrowed',
@@ -59,6 +71,15 @@ function clean(input) {
     purpose: str(input.purpose, 300),
     notes: str(input.notes, 1000),
     repayments,
+    // ---- Asset / property extras (ignored for loans) ----
+    subtype: ASSET_TYPES.has(input.subtype) ? input.subtype : 'plot',
+    area: num(input.area),
+    areaUnit: AREA_UNITS.has(input.areaUnit) ? input.areaUnit : 'sqft',
+    location: str(input.location, 200),
+    marketValue: num(input.marketValue),
+    rent: num(input.rent),
+    nextDue: str(input.nextDue, 10),
+    payments,
     createdAt: Date.now(),
   };
 }

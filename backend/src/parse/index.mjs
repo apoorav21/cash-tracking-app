@@ -30,7 +30,15 @@ Schema (use exactly these keys):
   "method": "cash" | "bank",                // default "cash"; "bank" for transfer/upi/neft/cheque/account/online.
   "date": string,                            // YYYY-MM-DD. Use today's date unless another date is clearly stated.
   "purpose": string,                         // short reason if stated, else "".
-  "notes": string                            // anything extra worth keeping, else "".
+  "notes": string,                           // anything extra worth keeping, else "".
+  // ---- Only meaningful when kind="asset" (use defaults / 0 / "" for loans) ----
+  "subtype": "plot" | "flat" | "land" | "house" | "commercial" | "gold" | "silver" | "other", // property type; default "plot".
+  "area": number,                            // numeric size if stated, else 0.
+  "areaUnit": "sqft" | "gaj" | "sqyd" | "sqm" | "acre" | "bigha" | "marla",  // unit for the size; default "sqft".
+  "location": string,                        // place/address if stated, else "".
+  "marketValue": number,                     // current/today value if stated, else 0.
+  "rent": number,                            // monthly rent if stated, else 0.
+  "nextDue": string                          // date the next instalment is due (YYYY-MM-DD) if stated, else "".
 }
 
 Rules:
@@ -40,6 +48,7 @@ Rules:
 - Default rateBasis to "monthly" unless the sentence clearly says per-annum/yearly.
 - Default interestType to "simple" unless the sentence says compound / चक्रवृद्धि / chakravriddhi.
 - amount is always a plain integer number of rupees, never a string.
+- For an ASSET, "amount" is the total price, and also fill subtype/area/areaUnit/location/marketValue/rent when stated. Units: "gaj"/"sq yard"/"gaz" -> "gaj"; "sq ft"/"square feet"/"sqft" -> "sqft"; "sq m"/"square metre" -> "sqm"; "acre" -> "acre"; "bigha" -> "bigha"; "marla" -> "marla". Example: "bought a 200 gaj plot in Sector 12 for 1 crore" -> kind "asset", subtype "plot", amount 10000000, area 200, areaUnit "gaj", location "Sector 12".
 - Today's date is ${today()}.
 - If a field is genuinely unknown, use "" for strings and 0 for numbers. Never invent specifics.`;
 
