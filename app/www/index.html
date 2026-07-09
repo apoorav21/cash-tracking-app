@@ -89,6 +89,34 @@ function loadChats(uid){
 }
 function saveChats(uid,c){ try{ localStorage.setItem(chatsKey(uid), JSON.stringify(c)); }catch(e){} }
 const newConvId = () => 'c'+Date.now()+Math.random().toString(36).slice(2,6);
+
+// ---- Demo sandbox ----
+// The public "Try the demo" account runs FULLY LOCAL: this seed loads fresh on
+// every demo login and every edit stays in the visitor's own browser (never
+// written to the backend). So demo visitors are isolated — nobody sees or
+// clobbers anyone else's changes, and it resets to a clean slate each visit.
+const DEMO_EMAIL = 'demo@cashflow.app';
+function demoSeed(){
+  const day=86400000, now=Date.now();
+  const iso=(ms)=>new Date(ms).toISOString().slice(0,10);
+  const ago=(d)=>iso(now-d*day), ahead=(d)=>iso(now+d*day);
+  let n=0; const id=()=>'demo-'+(now-(n++))+'-'+Math.random().toString(36).slice(2,6);
+  const T=(o)=>({ id:id(), kind:'borrowed', party:'', amount:0, date:ago(30), rate:0, rateBasis:'monthly', interestType:'simple', term:0, method:'cash', purpose:'', notes:'', repayments:[], subtype:'plot', area:0, areaUnit:'sqft', location:'', marketValue:0, rent:0, nextDue:'', payments:[], ...o });
+  return [
+    T({ kind:'borrowed', party:'Ramesh Uncle', amount:400000, rate:1.5, term:12, method:'cash', date:ago(118), purpose:'Shop inventory', notes:'Family — 1.5% रुपया सैकड़ा' }),
+    T({ kind:'borrowed', party:'Mehta Finance', amount:600000, rate:14, rateBasis:'annual', interestType:'compound', term:24, method:'bank', date:ago(80), purpose:'Business expansion', notes:'NEFT' }),
+    T({ kind:'borrowed', party:'Kishan Traders', amount:150000, rate:2, term:6, method:'cash', date:ago(45), purpose:'Festival stock', repayments:[{date:ago(15),principal:50000,interest:3000,amount:53000,method:'cash',note:'First return'}] }),
+    T({ kind:'borrowed', party:'Gupta Financiers', amount:500000, rate:1, term:12, method:'bank', date:ago(60), purpose:'To re-lend', notes:'Linked: relent to Vijay Textiles @ 2%' }),
+    T({ kind:'lent', party:'Vijay Textiles', amount:500000, rate:2, term:12, method:'bank', date:ago(60), purpose:'Working capital', notes:'Funded by Gupta Financiers @ 1% — 1% spread' }),
+    T({ kind:'lent', party:'Deepak Rao', amount:200000, rate:1.75, term:9, method:'bank', date:ago(95), purpose:'Car down payment', repayments:[{date:ago(65),principal:20000,interest:3500,amount:23500,method:'bank',note:''},{date:ago(35),principal:20000,interest:3200,amount:23200,method:'bank',note:''}] }),
+    T({ kind:'lent', party:'Priya Shah', amount:300000, rate:2, term:12, method:'cash', date:ago(70), purpose:'Clinic equipment' }),
+    T({ kind:'lent', party:'Suresh Patel', amount:100000, rate:0, term:0, method:'cash', date:ago(140), purpose:'Emergency — no interest', repayments:[{date:ago(20),principal:100000,interest:0,amount:100000,method:'cash',note:'Settled in full'}] }),
+    T({ kind:'asset', party:'Greenfield Plot — Sector 45', amount:8000000, method:'bank', date:ago(300), subtype:'plot', area:200, areaUnit:'gaj', location:'Sector 45, Gurugram', marketValue:9500000, notes:'Corner plot, park facing', payments:[{date:ago(300),amount:4000000,method:'cash',note:'Booking — cash'},{date:ago(300),amount:4000000,method:'bank',note:'Balance — bank'}] }),
+    T({ kind:'asset', party:'Skyline Residency 3BHK', amount:12000000, method:'bank', date:ago(210), subtype:'flat', area:1450, areaUnit:'sqft', location:'Wakad, Pune', marketValue:13500000, rent:28000, nextDue:ahead(12), notes:'Under-construction — 4 installments of 25%', payments:[{date:ago(210),amount:3000000,method:'bank',note:'Installment 1 (25%)'},{date:ago(140),amount:3000000,method:'bank',note:'Installment 2 (25%)'},{date:ago(60),amount:3000000,method:'bank',note:'Installment 3 (25%)'}] }),
+    T({ kind:'asset', party:'Phoenix Mall Shop', amount:13800000, method:'bank', date:ago(400), subtype:'commercial', area:650, areaUnit:'sqft', location:'Sector 12, Noida', marketValue:15200000, rent:65000, notes:'Ground floor, food court adjacent', payments:[{date:ago(400),amount:13800000,method:'bank',note:'Paid in full'}] }),
+    T({ kind:'asset', party:'Gold Coins (250 g)', amount:1800000, method:'cash', date:ago(160), subtype:'gold', marketValue:2100000, notes:'24K coins, locker', payments:[{date:ago(160),amount:1800000,method:'cash',note:'Purchased'}] }),
+  ];
+}
 // A short title from the first user message.
 const titleFrom = (msgs) => {
   const first=(msgs||[]).find(m=>m.role==='user');
@@ -267,7 +295,10 @@ const ACCENT_SHADOW = 'rgba(242,120,75,.55)';
 /* ============================================================= */
 function App({ user, onSignOut }){
   const uid = user && user.sub;
-  const [txns, setTxns] = useState(()=>loadLocal(uid));
+  // Demo = a public, shared login → run it as a local-only sandbox so visitors
+  // stay isolated (see DEMO_EMAIL / demoSeed above).
+  const isDemo = !!(user && user.email === DEMO_EMAIL);
+  const [txns, setTxns] = useState(()=> isDemo ? demoSeed() : loadLocal(uid));
   const [screen, setScreen] = useState('home');
   const [back, setBack] = useState('people');
   const [detailParty, setDetailParty] = useState(null);
@@ -316,6 +347,7 @@ function App({ user, onSignOut }){
   useEffect(()=>{
     let alive = true;
     (async ()=>{
+      if(isDemo) return;   // local sandbox — never pull the shared account
       if(Backend?.apiConfigured){
         setSyncing(true);
         try{
@@ -332,8 +364,9 @@ function App({ user, onSignOut }){
     return ()=>{ alive=false; };
   }, []);
 
-  // Mirror to local cache for offline use.
-  useEffect(()=>{ saveLocal(uid, txns); }, [txns]);
+  // Mirror to local cache for offline use (skip for the demo — its data is
+  // ephemeral and shouldn't linger in the visitor's browser storage).
+  useEffect(()=>{ if(!isDemo) saveLocal(uid, txns); }, [txns]);
 
   const showToast = (msg) => { setToast(msg); if(toastTimer.current) clearTimeout(toastTimer.current); toastTimer.current=setTimeout(()=>setToast(''), 2200); };
   const openChangePw = () => { setPwOld(''); setPwNew(''); setPwErr(''); setPwOpen(true); };
@@ -361,17 +394,17 @@ function App({ user, onSignOut }){
   const persistTxn = useCallback(async (txn) => {
     if(!paletteRef.current[txn.party]) paletteRef.current[txn.party]= txn.kind==='lent'?'#2A9D8F':txn.kind==='asset'?'#E9A23B':'#E5544B';
     setTxns(prev => prev.some(t=>t.id===txn.id) ? prev.map(t=>t.id===txn.id?txn:t) : [txn, ...prev]);
-    if(Backend?.apiConfigured){
+    if(!isDemo && Backend?.apiConfigured){
       try{ const saved = await Backend.addTxn(txn); if(saved) setTxns(prev => prev.map(t => t.id===txn.id ? saved : t)); }
       catch(e){ /* stays in local cache; reconciles on next load */ }
     }
-  }, []);
+  }, [isDemo]);
 
   const removeTxn = useCallback(async (txn) => {
     setTxns(prev => prev.filter(t => t.id !== txn.id));
     if(detailParty){ const others = txns.filter(t=>t.party===detailParty && t.id!==txn.id); if(!others.length){ setScreen(back||'people'); setDetailParty(null); } }
-    if(Backend?.apiConfigured){ try{ await Backend.deleteTxn(txn.id); }catch(e){} }
-  }, [detailParty, txns, back]);
+    if(!isDemo && Backend?.apiConfigured){ try{ await Backend.deleteTxn(txn.id); }catch(e){} }
+  }, [detailParty, txns, back, isDemo]);
 
   // Open the add-sheet pre-filled with an existing txn for editing.
   const editTxn = (t) => {
