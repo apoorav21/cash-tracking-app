@@ -2011,6 +2011,14 @@ function AuthScreens({ onAuthed }){
     catch(e){ if(/UserNotConfirmed/i.test(e&&e.message||'')){ try{ await Backend.resendCode({email:email.trim()}); }catch(_){} setInfo('Please verify your email — we sent a new code.'); setMode('confirm'); } else setErr(friendlyAuthErr(e)); }
     finally{ setBusy(false); }
   };
+  // One-tap public demo — signs into a shared, pre-populated sandbox account so
+  // portfolio visitors can explore without signing up. Credentials are public by design.
+  const doDemo = async ()=>{
+    setErr(''); setInfo(''); setBusy(true);
+    try{ const u = await Backend.signIn({ email:'demo@cashflow.app', password:'cashflowdemo' }); onAuthed(u); }
+    catch(e){ setErr('Demo is warming up — please try again in a moment.'); }
+    finally{ setBusy(false); }
+  };
   const doForgot = async ()=>{
     setErr(''); if(!email.trim()) return setErr('Enter your email first.');
     setBusy(true);
@@ -2047,6 +2055,8 @@ function AuthScreens({ onAuthed }){
           <input value={password} onChange={e=>setPassword(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')doLogin();}} type="password" placeholder="Password" style={css(authInput)} />
           <div style={css("text-align:right;margin:-4px 2px 12px;font-size:13px;")}><Link onClick={()=>go('forgot')}>Forgot password?</Link></div>
           <Btn onClick={doLogin}>Sign in</Btn>
+          <div style={css("display:flex;align-items:center;gap:10px;margin:16px 0;")}><div style={css("flex:1;height:1px;background:#e3d9c9;")}></div><span style={css("font-size:12px;font-weight:700;color:#a89f93;")}>or</span><div style={css("flex:1;height:1px;background:#e3d9c9;")}></div></div>
+          <button onClick={doDemo} disabled={busy} style={css("width:100%;border:1.5px solid #F2784B;background:#fff;color:#F2784B;border-radius:14px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;")}>▶ Try the demo — no signup needed</button>
           {Backend.googleEnabled && (<>
             <div style={css("display:flex;align-items:center;gap:10px;margin:18px 0;")}><div style={css("flex:1;height:1px;background:#e3d9c9;")}></div><span style={css("font-size:12px;font-weight:700;color:#a89f93;")}>or</span><div style={css("flex:1;height:1px;background:#e3d9c9;")}></div></div>
             <button onClick={google} style={css("width:100%;border:1.5px solid #e3d9c9;background:#fff;color:#2A2420;border-radius:14px;padding:13px;font-size:14px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;")}>
