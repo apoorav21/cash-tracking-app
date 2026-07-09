@@ -7,6 +7,8 @@
 // Buffered Function URL (not streaming): a voice note is short, so we return the
 // whole transcript in one JSON response.
 
+import { checkRateLimit } from './ratelimit.mjs';
+
 const API_KEY = process.env.OPENAI_API_KEY || '';
 const BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
 const MODEL = process.env.TRANSCRIBE_MODEL || 'gpt-4o-transcribe';
@@ -54,6 +56,8 @@ const extFor = (mime) => {
 };
 
 export const handler = async (event) => {
+  const rl = await checkRateLimit(event);
+  if (!rl.ok) return reply(429, { error: 'Rate limit reached — please wait a minute.' });
   if (!API_KEY) return reply(500, { error: 'OPENAI_API_KEY not set on the server.' });
 
   let body = {};

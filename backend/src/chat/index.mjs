@@ -16,6 +16,7 @@
 // It can optionally propose actions (add / edit / repayment) which the client
 // renders as a confirm card; nothing is ever written without the user tapping.
 import { readFileSync } from 'node:fs';
+import { checkRateLimit } from './ratelimit.mjs';
 
 const API_KEY = process.env.OPENAI_API_KEY || '';
 const BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '');
@@ -134,15 +135,24 @@ async function streamChat(messages, onContent, onReasoning) {
 }
 
 export const handler = awslambda.streamifyResponse(async (event, responseStream) => {
+  // Per-IP rate limit (checked BEFORE the stream starts so we can set 429).
+  const rl = await checkRateLimit(event);
   // NOTE: do NOT set access-control-allow-origin here — the Lambda Function URL's
   // own CORS config already adds it. Setting it again produces TWO ACAO headers,
   // which every browser rejects as a CORS violation (curl doesn't, which is why
   // this passed command-line tests but failed in the app).
   const meta = {
-    statusCode: 200,
+    statusCode: rl.ok ? 200 : 429,
     headers: { 'content-type': 'text/plain; charset=utf-8' },
   };
   const stream = awslambda.HttpResponseStream.from(responseStream, meta);
+  if (!rl.ok) {
+    // Non-200 makes the client's chatText() return null and show its friendly
+    // "couldn't reach Munshi" note instead of a broken stream.
+    stream.write('\n__ERROR__ Rate limit reached — please wait a minute.');
+    stream.end();
+    return;
+  }
 
   let body = {};
   try {

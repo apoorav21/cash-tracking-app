@@ -10,6 +10,8 @@ const BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').re
 // so we use a small, fast, cheap model (gpt-5.4-mini by default).
 const MODEL = process.env.PARSE_MODEL || 'gpt-5.4-mini';
 
+import { checkRateLimit } from './ratelimit.mjs';
+
 const today = () => {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -84,13 +86,22 @@ async function streamChat(messages, onText) {
 }
 
 export const handler = awslambda.streamifyResponse(async (event, responseStream) => {
+  // Per-IP rate limit (checked BEFORE the stream starts so we can set 429).
+  const rl = await checkRateLimit(event);
   // Do NOT set access-control-allow-origin here — the Function URL CORS config
   // already adds it; setting it twice makes browsers reject the response.
   const meta = {
-    statusCode: 200,
+    statusCode: rl.ok ? 200 : 429,
     headers: { 'content-type': 'text/plain; charset=utf-8' },
   };
   const stream = awslambda.HttpResponseStream.from(responseStream, meta);
+  if (!rl.ok) {
+    // Non-200 makes the client's parseText() return null and fall back to its
+    // instant on-device parser, so the UI keeps working.
+    stream.write('\n__ERROR__ Rate limit reached — please wait a minute.');
+    stream.end();
+    return;
+  }
 
   let text = '';
   try {

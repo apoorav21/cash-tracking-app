@@ -41,6 +41,14 @@ Parameters:
     Description: >
       CORS allow-origin. For Capacitor Android the WebView origins are
       https://localhost and capacitor://localhost; '*' is fine for a demo.
+  RateLimit:
+    Type: Number
+    Default: 30
+    Description: Max AI requests per IP per window (across parse + chat + transcribe).
+  RateWindowSec:
+    Type: Number
+    Default: 300
+    Description: Rate-limit window length in seconds (default 5 minutes).
   AuthDomainPrefix:
     Type: String
     Default: cashflow-auth-914210060536
@@ -87,6 +95,22 @@ Resources:
           KeyType: HASH
         - AttributeName: txnId
           KeyType: RANGE
+
+  # ---------- Rate-limit counters (per-IP, auto-expiring) ----------
+  RateLimitTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cashflow-ratelimit
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expireAt
+        Enabled: true
 
   # ---------- Authentication (Cognito User Pool) ----------
   UserPool:
@@ -232,6 +256,12 @@ Resources:
           PARSE_MODEL: !Ref ParseModel
           OPENAI_BASE_URL: !Ref OpenAiBaseUrl
           ALLOWED_ORIGIN: !Ref AllowedOrigin
+          RATE_TABLE: !Ref RateLimitTable
+          RATE_LIMIT: !Ref RateLimit
+          RATE_WINDOW_SEC: !Ref RateWindowSec
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RateLimitTable
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: RESPONSE_STREAM
@@ -254,6 +284,12 @@ Resources:
           CHAT_MODEL: !Ref ChatModel
           OPENAI_BASE_URL: !Ref OpenAiBaseUrl
           ALLOWED_ORIGIN: !Ref AllowedOrigin
+          RATE_TABLE: !Ref RateLimitTable
+          RATE_LIMIT: !Ref RateLimit
+          RATE_WINDOW_SEC: !Ref RateWindowSec
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RateLimitTable
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: RESPONSE_STREAM
@@ -277,6 +313,12 @@ Resources:
           TRANSCRIBE_LANGUAGE: !Ref TranscribeLanguage
           OPENAI_BASE_URL: !Ref OpenAiBaseUrl
           ALLOWED_ORIGIN: !Ref AllowedOrigin
+          RATE_TABLE: !Ref RateLimitTable
+          RATE_LIMIT: !Ref RateLimit
+          RATE_WINDOW_SEC: !Ref RateWindowSec
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RateLimitTable
       FunctionUrlConfig:
         AuthType: NONE
         InvokeMode: BUFFERED
