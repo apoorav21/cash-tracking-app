@@ -1,5 +1,9 @@
 # Cashflow — voice-driven money tracker
 
+### ▶ [**Try it live →**](https://apoorav21.github.io/cash-tracking-app/)
+No signup — open the link and tap **"Try the demo"** for a pre-loaded sandbox
+(your changes stay in your browser and reset on refresh).
+
 Track money you've **borrowed**, **lent**, or invested in **assets** — with interest
 math, an Obsidian-style relationship graph, property/installment tracking, and a
 floating **＋ button** where you just *speak* a transaction and an LLM fills in the
@@ -13,6 +17,7 @@ AI assistant that knows your whole ledger.
 - **Voice capture** — tap the mic and speak in Hindi or English; the audio is transcribed by **OpenAI `gpt-4o-transcribe`** and returned as text.
 - **AI parsing** — the transcript goes to **OpenAI `gpt-5.4-mini`**, which streams back structured JSON (party, amount, rate, term, method…) token-by-token into an **editable preview**. Nothing writes until you confirm.
 - **Munshi — a Hindi/English accounting assistant** (the **₹ Munshi** tab): chat about your money, get step-by-step interest math in the **रुपया सैकड़ा** convention, and let it propose new entries, repayments, or **linked deals** (e.g. *"took ₹5L from X at 1% and lent it to Y at 2%"* → two transactions in one go) that you confirm before saving.
+- **Sendable hisab** — ask Munshi for anyone's statement (*"Deepak ka hisab bana ke do, bhejne ke liye"*) and it writes a clean, ready-to-send हिसाब — principal, interest, repayments, balance — with a one-tap **WhatsApp / share** button.
 - **Money graph** — a draggable, force-directed **SVG** graph of everyone you owe or who owes you, with **directional arrows** showing which way the money flows.
 - **Assets / property** — record plots, flats, land, commercial, gold/silver with **size + unit**, **location**, **installment payments** (progress bar + % paid), **market value** (gain/loss), **rental income**, and a **"next payment due"** reminder.
 - **Repayments & partial payments** — record किश्तें against any loan; interest stops accruing on returned principal from its repayment date.
